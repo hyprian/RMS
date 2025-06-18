@@ -1,3 +1,6 @@
-__pycache__
-.rms_cache
+__pycache__/
+*.pyc
 *.log
+.session_data/
+.rms_cache/
+uploaded_data/

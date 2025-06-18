@@ -37,12 +37,12 @@ platforms:
   - name: "Meesho"
     slug: "meesho"
     accounts:
-      - name: "Account 1 (MS)"
-        slug: "ms_acc1"
+      - name: "Account CSTE (MS)"
+        slug: "ms_acc_CSTE"
         sku_column: "SKU" # Adjust if different for Meesho
         quantity_column: "Quantity"
-      - name: "Account 2 (MS)"
-        slug: "ms_acc2"
+      - name: "Account Rudra (MS)"
+        slug: "ms_acc_rudra"
         sku_column: "SKU"
         quantity_column: "Quantity"
 
