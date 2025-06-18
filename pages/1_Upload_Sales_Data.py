@@ -110,3 +110,4 @@ if st.session_state.uploaded_file_paths:
 else:
     st.sidebar.caption("No files uploaded in this session yet.")
 logger.info("Upload Sales Data page loaded.")
+

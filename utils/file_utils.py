@@ -2,6 +2,7 @@
 import os
 import logging
 from datetime import datetime
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -89,3 +90,29 @@ def get_uploaded_sales_files(platform_slug, account_slug, report_type, config):
     except Exception as e:
         logger.error(f"Error getting uploaded files for {platform_slug}/{account_slug}/{report_type}: {e}", exc_info=True)
         return None # Or []
+    
+
+def clear_uploaded_data_folders(config):
+    """Clears all subdirectories within the uploaded sales data folder."""
+    try:
+        data_paths_config = config.get('data_paths', {})
+        uploaded_root = data_paths_config.get('uploaded_sales_root', 'uploaded_data')
+        sales_subdir = data_paths_config.get('sales_reports_subdir', 'sales')
+        
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # RMS directory
+        base_upload_path = os.path.join(project_root, uploaded_root, sales_subdir)
+
+        if os.path.exists(base_upload_path) and os.path.isdir(base_upload_path):
+            for item_name in os.listdir(base_upload_path):
+                item_path = os.path.join(base_upload_path, item_name)
+                if os.path.isdir(item_path): # We expect subdirs like amazon_main, flipkart_fk_acc1
+                    shutil.rmtree(item_path)
+                    logger.info(f"Removed directory: {item_path}")
+            logger.info(f"All subdirectories in {base_upload_path} cleared.")
+            return True
+        else:
+            logger.info(f"Base upload directory {base_upload_path} does not exist. Nothing to clear.")
+            return True # No error if it doesn't exist
+    except Exception as e:
+        logger.error(f"Error clearing uploaded data folders: {e}", exc_info=True)
+        return False
