@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import logging
 import json # Make sure json is imported
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -240,3 +241,131 @@ class BaserowFetcher:
 
 
         return df
+    
+    def get_existing_sales_date_ranges(self, processed_sales_table_id):
+        """
+        Fetches MIN and MAX Sale Date for each Platform-Account combination
+        from the Processed Sales Data table.
+        """
+        logger.info(f"Fetching existing sales date ranges from table {processed_sales_table_id}")
+        if not processed_sales_table_id:
+            logger.error("Processed sales table ID not provided.")
+            return {}
+
+        # This is a simplified approach. Baserow's API might not directly support MIN/MAX aggregates
+        # in a single query with group by.
+        # Option 1: Fetch all 'Platform', 'Account Name', 'Sale Date' and do it in Pandas. (Can be slow for large tables)
+        # Option 2: Create Baserow views that pre-aggregate this (manual setup in Baserow).
+        # Option 3: Iterate and query per platform/account (many API calls).
+
+        # Let's go with Option 1 for now, assuming the table isn't excessively large initially.
+        # For production, this would need optimization.
+        try:
+            all_sales_records_df = self.get_table_data_as_dataframe(
+                processed_sales_table_id,
+                # We only need these columns for this specific task
+                # If your get_table_data_as_dataframe fetches all by default, that's fine too.
+                # required_columns=['Platform', 'Account Name', 'Sale Date'] 
+            )
+
+            if all_sales_records_df.empty or not all({'Platform', 'Account Name', 'Sale Date'} <= set(all_sales_records_df.columns)):
+                logger.warning("No data or missing required columns in processed sales table to determine date ranges.")
+                return {}
+
+            all_sales_records_df['Sale Date'] = pd.to_datetime(all_sales_records_df['Sale Date'], errors='coerce')
+            all_sales_records_df.dropna(subset=['Sale Date'], inplace=True)
+
+            if all_sales_records_df.empty:
+                return {}
+
+            # Ensure 'Platform' and 'Account Name' are strings for groupby
+            all_sales_records_df['Platform'] = all_sales_records_df['Platform'].astype(str)
+            all_sales_records_df['Account Name'] = all_sales_records_df['Account Name'].astype(str)
+
+
+            date_ranges = all_sales_records_df.groupby(['Platform', 'Account Name'])['Sale Date'].agg(['min', 'max'])
+            
+            result = {}
+            for index, row in date_ranges.iterrows():
+                platform, account = index
+                if platform not in result:
+                    result[platform] = {}
+                result[platform][account] = {
+                    'min_date': row['min'].strftime('%Y-%m-%d'),
+                    'max_date': row['max'].strftime('%Y-%m-%d')
+                }
+            logger.info(f"Fetched date ranges: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"Error fetching existing sales date ranges: {e}", exc_info=True)
+            return {}
+
+    def delete_sales_records_for_period(self, table_id, platform, account_name, msku, start_date_str, end_date_str):
+        """
+        Deletes sales records for a specific MSKU, platform, account within a date range.
+        Baserow API for deleting multiple rows based on complex filters can be tricky.
+        Often, you fetch IDs based on filters, then delete by ID.
+        """
+        logger.info(f"Attempting to delete records for {platform}-{account_name}, MSKU: {msku} from {start_date_str} to {end_date_str}")
+        
+        # Construct filter: by platform, account, msku, and date range
+        # Baserow field names/IDs would be needed here. Assuming 'Platform', 'Account Name', 'MSKU', 'Sale Date' are field names.
+        # Example filter string (syntax depends on Baserow API version and field types):
+        # filter__field_Platform__equal=Amazon&filter__field_Account_Name__equal=Main&filter__field_MSKU__equal=XYZ
+        # &filter__field_Sale_Date__date_after_or_equal=YYYY-MM-DD&filter__field_Sale_Date__date_before_or_equal=YYYY-MM-DD
+        
+        # This is a placeholder. Actual implementation requires knowing Baserow field IDs for filters.
+        # For now, this function would need to:
+        # 1. List rows matching the criteria (platform, account, msku, date range).
+        # 2. Get their Baserow row IDs.
+        # 3. Call the delete row API for each ID (or batch delete if available).
+        
+        # Simplified: For this example, we'll assume we'd query and delete.
+        # This part is complex and needs careful implementation with Baserow's API.
+        # For now, we'll just log it. A robust solution would involve fetching row IDs based on filters.
+        
+        # Fetch rows to delete
+        # Example: /api/database/rows/table/{table_id}/?user_field_names=true&filter__Platform__equal={platform}&filter__Account_Name__equal={account_name}&filter__MSKU__equal={msku}&filter__Sale_Date__date_after_or_equal={start_date_str}&filter__Sale_Date__date_before_or_equal={end_date_str}
+        # This requires field names to be exactly 'Platform', 'Account Name', etc. or using field_XXX IDs.
+        
+        # For now, let's assume a simpler strategy for the POC: if we are uploading daily aggregates,
+        # we might delete records for specific MSKU/Platform/Account/SaleDate combinations.
+        
+        # To implement a true "delete for period" for an MSKU:
+        # 1. Construct the filter URL.
+        # 2. GET request to fetch matching row IDs.
+        # 3. If rows found, POST to /api/database/rows/table/{table_id}/batch-delete/ with the list of row IDs.
+        # This is non-trivial with the current generic fetcher.
+        logger.warning("delete_sales_records_for_period is a placeholder and needs full Baserow API filter/delete implementation.")
+        return True # Placeholder
+
+    def batch_create_rows(self, table_id, records_list):
+        """
+        Creates rows in a Baserow table in batches.
+        Baserow API typically supports creating multiple rows in one request.
+        Max 200 items per request for batch row creation.
+        """
+        if not records_list:
+            return True
+        
+        url = f"{self.base_url}/api/database/rows/table/{table_id}/batch/?user_field_names=true"
+        all_results = []
+        
+        # Baserow batch create limit is often 200
+        batch_size = 100 # Being conservative
+        for i in range(0, len(records_list), batch_size):
+            batch = records_list[i:i + batch_size]
+            payload = {"items": batch} # Payload structure for batch create
+            try:
+                response = requests.post(url, headers=self.headers, json=payload)
+                response.raise_for_status()
+                all_results.extend(response.json().get("items", [])) # Response structure for batch create
+                logger.info(f"Successfully created batch of {len(batch)} rows in table {table_id}.")
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error batch creating rows in table {table_id}: {e}")
+                if response is not None: logger.error(f"Response content: {response.text}")
+                return False # Indicate failure
+            except json.JSONDecodeError as e:
+                logger.error(f"Error decoding JSON response for batch create in table {table_id}: {e}. Response text: {response.text[:500]}")
+                return False
+        return True

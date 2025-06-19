@@ -3,7 +3,8 @@ baserow:
   api_token: 9UCN23rsBlOxh23U3nGt61yCfCnDFZWq
   sku_mapping_table_id: 575523 
   combo_sku_table_id: 575521   
-  inventory_table_id: 575513 
+  inventory_table_id: 575513
+  processed_sales_data_table_id:  
 
 cache:
   directory: ".rms_cache" 
