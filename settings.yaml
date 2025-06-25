@@ -1,10 +1,10 @@
 baserow:
   base_url: "https://api.baserow.io" 
   api_token: 9UCN23rsBlOxh23U3nGt61yCfCnDFZWq
-  sku_mapping_table_id: 575523 
-  combo_sku_table_id: 575521   
-  inventory_table_id: 575513
-  processed_sales_data_table_id:  
+  sku_mapping_table_id: 584472 
+  combo_sku_table_id: 584474   
+  inventory_table_id: 584468
+  processed_sales_data_table_id: 581245
 
 cache:
   directory: ".rms_cache" 

@@ -252,54 +252,68 @@ class BaserowFetcher:
             logger.error("Processed sales table ID not provided.")
             return {}
 
-        # This is a simplified approach. Baserow's API might not directly support MIN/MAX aggregates
-        # in a single query with group by.
-        # Option 1: Fetch all 'Platform', 'Account Name', 'Sale Date' and do it in Pandas. (Can be slow for large tables)
-        # Option 2: Create Baserow views that pre-aggregate this (manual setup in Baserow).
-        # Option 3: Iterate and query per platform/account (many API calls).
-
-        # Let's go with Option 1 for now, assuming the table isn't excessively large initially.
-        # For production, this would need optimization.
         try:
             all_sales_records_df = self.get_table_data_as_dataframe(
                 processed_sales_table_id,
-                # We only need these columns for this specific task
-                # If your get_table_data_as_dataframe fetches all by default, that's fine too.
-                # required_columns=['Platform', 'Account Name', 'Sale Date'] 
+                # No need to specify required_columns here if get_table_data_as_dataframe fetches all
+                # or if the columns we need are standard.
             )
 
-            if all_sales_records_df.empty or not all({'Platform', 'Account Name', 'Sale Date'} <= set(all_sales_records_df.columns)):
-                logger.warning("No data or missing required columns in processed sales table to determine date ranges.")
+            if all_sales_records_df is None or all_sales_records_df.empty: # Check for None as well
+                logger.warning("No data fetched from processed sales table to determine date ranges.")
+                return {}
+
+            required_cols_for_range_check = {'Platform', 'Account Name', 'Sale Date'}
+            # Check if all required columns are present in the DataFrame
+            if not required_cols_for_range_check.issubset(all_sales_records_df.columns):
+                missing = required_cols_for_range_check - set(all_sales_records_df.columns)
+                logger.warning(f"Missing required columns ({missing}) in processed sales table to determine date ranges. Available: {all_sales_records_df.columns.tolist()}")
                 return {}
 
             all_sales_records_df['Sale Date'] = pd.to_datetime(all_sales_records_df['Sale Date'], errors='coerce')
             all_sales_records_df.dropna(subset=['Sale Date'], inplace=True)
 
             if all_sales_records_df.empty:
+                logger.warning("No valid Sale Date entries found after conversion and NA drop.")
                 return {}
 
-            # Ensure 'Platform' and 'Account Name' are strings for groupby
             all_sales_records_df['Platform'] = all_sales_records_df['Platform'].astype(str)
             all_sales_records_df['Account Name'] = all_sales_records_df['Account Name'].astype(str)
-
 
             date_ranges = all_sales_records_df.groupby(['Platform', 'Account Name'])['Sale Date'].agg(['min', 'max'])
             
             result = {}
             for index, row in date_ranges.iterrows():
-                platform, account = index
+                # index can be a tuple (Platform, Account Name) or a single value if only one grouping col
+                if isinstance(index, tuple) and len(index) == 2:
+                    platform, account = index
+                elif not isinstance(index, tuple) and len(date_ranges.index.names) == 1 and date_ranges.index.name == 'Platform': # Or Account Name
+                    # Handle cases where groupby might only have one effective grouping column if the other is all same/NaN
+                    # This part might need adjustment based on how groupby behaves with your actual data
+                    platform = index if date_ranges.index.name == 'Platform' else "Unknown"
+                    account = index if date_ranges.index.name == 'Account Name' else "Unknown"
+                    if date_ranges.index.name == 'Platform': # If grouped by Platform, assume a single account or aggregate
+                         account = all_sales_records_df['Account Name'].unique()[0] if len(all_sales_records_df['Account Name'].unique()) == 1 else "Multiple/Aggregated"
+                    elif date_ranges.index.name == 'Account Name':
+                         platform = all_sales_records_df['Platform'].unique()[0] if len(all_sales_records_df['Platform'].unique()) == 1 else "Multiple/Aggregated"
+
+                else: # Fallback or error for unexpected index structure
+                    logger.warning(f"Unexpected index structure from groupby: {index}")
+                    continue
+
+
                 if platform not in result:
                     result[platform] = {}
                 result[platform][account] = {
-                    'min_date': row['min'].strftime('%Y-%m-%d'),
-                    'max_date': row['max'].strftime('%Y-%m-%d')
+                    'min_date': row['min'].strftime('%Y-%m-%d') if pd.notna(row['min']) else None,
+                    'max_date': row['max'].strftime('%Y-%m-%d') if pd.notna(row['max']) else None
                 }
             logger.info(f"Fetched date ranges: {result}")
             return result
         except Exception as e:
             logger.error(f"Error fetching existing sales date ranges: {e}", exc_info=True)
             return {}
-
+        
     def delete_sales_records_for_period(self, table_id, platform, account_name, msku, start_date_str, end_date_str):
         """
         Deletes sales records for a specific MSKU, platform, account within a date range.
