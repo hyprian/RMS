@@ -1,4 +1,5 @@
 # RMS/data_processing/baserow_fetcher.py
+from datetime import datetime
 import requests
 import pandas as pd
 import logging
@@ -383,3 +384,270 @@ class BaserowFetcher:
                 logger.error(f"Error decoding JSON response for batch create in table {table_id}: {e}. Response text: {response.text[:500]}")
                 return False
         return True
+    
+    def check_existing_data_for_period(self, table_id, platform, account_name, start_date_str, end_date_str):
+        """
+        Checks if any data exists for the given platform, account, and date range.
+        Returns True if data exists, False otherwise.
+        This is a simplified check; it doesn't check for specific MSKUs yet.
+        """
+        logger.info(f"Checking for existing data: Table {table_id}, P: {platform}, A: {account_name}, {start_date_str}-{end_date_str}")
+        if not all([table_id, platform, account_name, start_date_str, end_date_str]):
+            logger.warning("Missing parameters for check_existing_data_for_period.")
+            return False # Or raise error
+
+        # Construct filter for Baserow API.
+        # This requires knowing the actual field names/IDs in your Baserow table.
+        # Assuming field names are 'Platform', 'Account Name', 'Sale Date'
+        # And date format in Baserow is YYYY-MM-DD
+        # Example: &filter__field_Platform__equal=Amazon&filter__field_Account_Name__equal=Main Account&filter__field_Sale_Date__date_after_or_equal=2023-01-01&filter__field_Sale_Date__date_before_or_equal=2023-01-31
+        
+        # For a robust solution, you'd get field IDs programmatically.
+        # For now, let's assume you have these field names.
+        # IMPORTANT: Replace 'field_Platform_ID', 'field_Account_Name_ID', 'field_Sale_Date_ID'
+        # with the actual Baserow field IDs (e.g., field_12345) or ensure your field names are exactly as used.
+        # If using user_field_names=true, you can use the display names.
+        
+        # Let's assume user_field_names=true is used in _get_all_rows, so we can use display names.
+        # Ensure your Baserow table has fields named exactly "Platform", "Account Name", "Sale Date".
+        filters = [
+            f"filter__Platform__equal={requests.utils.quote(platform)}",
+            f"filter__Account_Name__equal={requests.utils.quote(account_name)}",
+            f"filter__Sale_Date__date_after_or_equal={start_date_str}", # Assumes YYYY-MM-DD
+            f"filter__Sale_Date__date_before_or_equal={end_date_str}"  # Assumes YYYY-MM-DD
+        ]
+        filter_params = "&".join(filters)
+        
+        # We only need to know if at least one row exists, so limit to 1.
+        url = f"{self.base_url}/api/database/rows/table/{table_id}/?user_field_names=true&size=1&{filter_params}"
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            response.raise_for_status()
+            data = response.json()
+            if data.get("count", 0) > 0:
+                logger.info("Existing data found for the specified period.")
+                return True
+            logger.info("No existing data found for the specified period.")
+            return False
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error checking existing data: {e}", exc_info=True)
+            if response is not None: logger.error(f"Response content: {response.text}")
+            return False # Assume no data on error, or handle differently
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding JSON for existing data check: {e}. Response: {response.text[:500]}")
+            return False
+        
+        
+    def get_row_ids_for_criteria(self, table_id, criteria_list_of_dicts):
+        """
+        Fetches Baserow row IDs for records matching a list of specific criteria.
+        Each dict in criteria_list_of_dicts defines a unique record to find.
+        Example criteria_dict: {'Sale Date': 'YYYY-MM-DD', 'MSKU': 'msku1', 'Platform': 'Amazon', 'Account Name': 'Main'}
+        
+        This is complex because Baserow API filter for "OR" conditions across multiple full criteria sets is not direct.
+        A more robust way is to fetch all data for a broader range and filter in pandas, or do multiple API calls.
+        
+        For now, this will be a simplified version that assumes you might query for each criterion one by one,
+        which is inefficient but illustrates the concept. A better way is to fetch based on a common denominator
+        (like date range, platform, account) and then filter locally.
+
+        Let's refine this: Fetch rows matching a broader filter (platform, account, date range of the new upload)
+        and then locally identify which of those match the specific (Sale Date, MSKU) from the new upload.
+        """
+        row_ids_to_delete = []
+        if not criteria_list_of_dicts:
+            return row_ids_to_delete
+
+        # Extract common filters: platform, account, min/max sale dates from the criteria
+        platforms = list(set(c['Platform'] for c in criteria_list_of_dicts))
+        accounts = list(set(c['Account Name'] for c in criteria_list_of_dicts))
+        sale_dates = [datetime.strptime(c['Sale Date'], '%Y-%m-%d').date() for c in criteria_list_of_dicts]
+        
+        if not platforms or not accounts or not sale_dates:
+            logger.warning("Insufficient common criteria to fetch rows for deletion.")
+            return []
+
+        # For simplicity, assume one platform/account per batch of criteria.
+        # If multiple, this logic needs to be looped or made more generic.
+        platform = platforms[0]
+        account_name = accounts[0]
+        min_date_str = min(sale_dates).strftime('%Y-%m-%d')
+        max_date_str = max(sale_dates).strftime('%Y-%m-%d')
+
+        logger.info(f"Fetching existing rows for P:{platform}, A:{account_name}, Dates:{min_date_str}-{max_date_str} to identify deletable IDs.")
+
+        filters = [
+            f"filter__Platform__equal={requests.utils.quote(platform)}",
+            f"filter__Account_Name__equal={requests.utils.quote(account_name)}",
+            f"filter__Sale_Date__date_after_or_equal={min_date_str}",
+            f"filter__Sale_Date__date_before_or_equal={max_date_str}"
+        ]
+        filter_params = "&".join(filters)
+        
+        # Fetch all potentially relevant rows (this could be large)
+        # The _get_all_rows helper is used here.
+        url = f"{self.base_url}/api/database/rows/table/{table_id}/?user_field_names=true&{filter_params}&size=200" # Max size per page
+        
+        all_fetched_rows = []
+        page = 1
+        while True:
+            paginated_url = f"{url}&page={page}"
+            try:
+                response = requests.get(paginated_url, headers=self.headers)
+                response.raise_for_status()
+                data = response.json()
+                results = data.get("results", [])
+                all_fetched_rows.extend(results)
+                if data.get("next") is None or not results: break
+                page += 1
+            except Exception as e:
+                logger.error(f"Error fetching rows for ID identification: {e}", exc_info=True)
+                return [] # Critical error, stop
+
+        if not all_fetched_rows:
+            logger.info("No existing rows found matching the broader criteria.")
+            return []
+
+        # Now, locally filter these fetched_rows against the specific criteria_list_of_dicts
+        # This assumes 'Sale Date' from Baserow is string 'YYYY-MM-DD' or needs parsing.
+        # And 'MSKU' from Baserow matches.
+        for existing_row in all_fetched_rows:
+            # Ensure Baserow 'Sale Date' is comparable (string YYYY-MM-DD)
+            # Baserow date fields often come back as YYYY-MM-DD if user_field_names=true
+            existing_sale_date_str = existing_row.get('Sale Date')
+            existing_msku = existing_row.get('MSKU')
+            
+            # Handle if MSKU is None/NaN in Baserow (represented as None or empty string)
+            if existing_msku is None: existing_msku = "" # Or some other placeholder if needed for comparison
+
+            for new_record_criteria in criteria_list_of_dicts:
+                new_msku = new_record_criteria.get('MSKU')
+                if new_msku is None: new_msku = ""
+
+                if (existing_sale_date_str == new_record_criteria.get('Sale Date') and
+                    existing_msku == new_msku and # Compare potentially None MSKUs carefully
+                    existing_row.get('Platform') == new_record_criteria.get('Platform') and
+                    existing_row.get('Account Name') == new_record_criteria.get('Account Name')):
+                    row_ids_to_delete.append(existing_row['id'])
+                    break # Found a match for this existing_row, move to next existing_row
+        
+        unique_ids_to_delete = list(set(row_ids_to_delete)) # Ensure uniqueness
+        logger.info(f"Identified {len(unique_ids_to_delete)} existing row IDs to delete.")
+        return unique_ids_to_delete
+    
+    def delete_single_row(self, table_id, row_id):
+        """Deletes a single row from a table given its Baserow row ID."""
+        url = f"{self.base_url}/api/database/rows/table/{table_id}/{row_id}/"
+        response = None
+        try:
+            logger.info(f"Table {table_id}: Attempting to delete single row ID: {row_id} via URL: {url}")
+            response = requests.delete(url, headers=self.headers)
+            
+            if not response.ok and response.status_code != 404: # Log error unless it's a 404
+                 logger.error(f"Table {table_id}: Single row delete API call failed for ID {row_id}. Status: {response.status_code}, Response: {response.text}")
+            
+            response.raise_for_status() # Will raise HTTPError for 4xx/5xx client/server errors (except we handle 404 below)
+            
+            logger.info(f"Table {table_id}: Successfully deleted row ID: {row_id}. Status: {response.status_code}")
+            return True
+        except requests.exceptions.HTTPError as http_err:
+            if response is not None and response.status_code == 404:
+                logger.warning(f"Table {table_id}: Row ID {row_id} not found for deletion (HTTP 404). It might have been already deleted or never existed.")
+                return True # Treat as "success" in the context of trying to remove it
+            logger.error(f"Table {table_id}: HTTPError deleting row ID {row_id}. Error: {http_err}", exc_info=False)
+            if response is not None: logger.error(f"Response content: {response.text}") # Already logged if not response.ok
+            return False
+        except requests.exceptions.RequestException as req_err:
+            logger.error(f"Table {table_id}: RequestException deleting row ID {row_id}. Error: {req_err}", exc_info=True)
+            return False
+
+    def delete_rows_by_ids_one_by_one(self, table_id, row_ids_to_delete):
+        """
+        Deletes rows one by one. Slower than batch but a workaround if batch delete fails.
+        """
+        if not row_ids_to_delete:
+            logger.info(f"Table {table_id}: No row IDs provided for one-by-one deletion.")
+            return True # Or False if you consider it an issue that it was called with no IDs
+
+        logger.info(f"Table {table_id}: Starting one-by-one deletion for {len(row_ids_to_delete)} row IDs.")
+        overall_success = True
+        successfully_deleted_count = 0
+        failed_to_delete_ids = []
+
+        for rid_str in row_ids_to_delete:
+            try:
+                row_id = int(rid_str)
+                if self.delete_single_row(table_id, row_id):
+                    successfully_deleted_count +=1
+                else:
+                    overall_success = False
+                    failed_to_delete_ids.append(row_id)
+                    # Continue trying to delete other rows
+            except (ValueError, TypeError):
+                logger.warning(f"Table {table_id}: Invalid non-integer row ID '{rid_str}' skipped for single deletion.")
+                overall_success = False # Count this as a failure in the overall operation
+                failed_to_delete_ids.append(rid_str) # Add the problematic ID
+        
+        logger.info(f"Table {table_id}: Finished one-by-one deletion. Successfully deleted: {successfully_deleted_count}. Failed/Skipped: {len(failed_to_delete_ids)}.")
+        if failed_to_delete_ids:
+            logger.warning(f"Table {table_id}: IDs that failed or were skipped: {failed_to_delete_ids}")
+            
+        return overall_success # Returns True if all attempts were successful (or row not found), False if any actual deletion error occurred for an existing row or if any ID was invalid.
+
+    def get_row_ids_for_range_deletion(self, table_id, platform, account_name, start_date_str, end_date_str):
+        """
+        Fetches all row IDs for a given platform, account (optional), and date range.
+        If platform or account_name is None, it means "all" for that dimension.
+        WARNING: Use with extreme caution.
+        """
+        logger.warning(f"Fetching ALL row IDs for range deletion: T:{table_id}, P:{platform}, A:{account_name}, {start_date_str}-{end_date_str}")
+        
+        filters = []
+        if platform:
+            filters.append(f"filter__Platform__equal={requests.utils.quote(platform)}")
+        if account_name:
+            filters.append(f"filter__Account_Name__equal={requests.utils.quote(account_name)}")
+        if start_date_str:
+            filters.append(f"filter__Sale_Date__date_after_or_equal={start_date_str}")
+        if end_date_str:
+            filters.append(f"filter__Sale_Date__date_before_or_equal={end_date_str}")
+        
+        filter_params = "&".join(filters)
+        
+        all_matching_rows = []
+        page = 1
+        # Fetch all rows matching the criteria, page by page
+        # The URL needs to be constructed carefully.
+        # We only need the 'id' field. Add 'field_ids=id_field_number' if you know it.
+        base_url_for_list = f"{self.base_url}/api/database/rows/table/{table_id}/?user_field_names=true&size=200"
+        if filter_params:
+            base_url_for_list += f"&{filter_params}"
+
+        logger.debug(f"Fetching rows for range deletion with URL (page 1): {base_url_for_list}&page=1")
+
+        while True:
+            current_url = f"{base_url_for_list}&page={page}"
+            try:
+                response = requests.get(current_url, headers=self.headers)
+                response.raise_for_status()
+                data = response.json()
+                results = data.get("results", [])
+                if not results:
+                    break
+                all_matching_rows.extend(results)
+                if data.get("next") is None:
+                    break
+                page += 1
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Error fetching rows for range deletion: {e}", exc_info=True)
+                if response is not None: logger.error(f"Response: {response.text}")
+                return [] # Return empty on error
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error fetching rows for range deletion: {e}. Response: {response.text[:500]}")
+                return []
+
+
+        row_ids = [row['id'] for row in all_matching_rows if 'id' in row]
+        logger.info(f"Found {len(row_ids)} row IDs for range deletion criteria.")
+        return row_ids
