@@ -5,61 +5,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def get_sales_data(fetcher, processed_sales_table_id: str, 
-                   filter_start_date: datetime.date, 
-                   filter_end_date: datetime.date, 
-                   platforms: list = None, 
-                   accounts: list = None, 
-                   mskust_list: list = None) -> pd.DataFrame:
+def process_sales_data_for_analytics(
+    all_sales_df: pd.DataFrame, # Changed: Expects the full DataFrame
+    filter_start_date: datetime.date, 
+    filter_end_date: datetime.date, 
+    platforms: list = None, 
+    accounts: list = None, 
+    mskust_list: list = None) -> pd.DataFrame:
     """
-    Fetches sales data from Baserow and processes it for analytics.
+    Processes a pre-loaded sales DataFrame for analytics.
     - Filters data based on provided date range, platforms, accounts, and MSKUs.
-    - For Amazon data (which is period-aggregated), it distributes the sales
-      evenly across the days within its reported period that also fall into
-      the user's filter_start_date and filter_end_date.
+    - For Amazon data, it distributes the sales.
     - Returns a DataFrame with daily sales data.
     """
-    logger.info(f"KPI_CALC: Fetching sales data for period {filter_start_date} to {filter_end_date}")
-    if not processed_sales_table_id:
-        logger.error("KPI_CALC: Processed sales table ID not provided.")
+    logger.info(f"KPI_CALC: Processing sales data for period {filter_start_date} to {filter_end_date}")
+
+    if all_sales_df is None or all_sales_df.empty:
+        logger.warning("KPI_CALC: Provided sales DataFrame is empty.")
         return pd.DataFrame()
-
-    # --- Construct Baserow Filters ---
-    # This part is complex due to Baserow's API filtering capabilities.
-    # A robust solution would involve building precise filter strings.
-    # For now, we'll fetch a slightly broader range and filter more in Pandas,
-    # especially if complex OR conditions for platforms/accounts are needed.
-
-    # Fetch all data for now and filter in pandas.
-    # In a production system with large data, optimize this to fetch less from Baserow.
-    # For date filtering, Baserow API is good, but for multiple platforms/accounts/MSKUs (OR conditions),
-    # it can be tricky to construct a single API filter string.
-    
-    all_raw_sales_df = fetcher.get_table_data_as_dataframe(processed_sales_table_id)
-
-    if all_raw_sales_df is None or all_raw_sales_df.empty:
-        logger.warning("KPI_CALC: No sales data fetched from Baserow.")
-        return pd.DataFrame()
-
-    # --- Initial Data Cleaning and Type Conversion ---
-    required_cols = ['Sale Date', 'MSKU', 'Platform', 'Account Name', 
-                     'Quantity Sold', 'Net Revenue', 'Report Period Start Date']
-    missing_cols = [col for col in required_cols if col not in all_raw_sales_df.columns]
-    if missing_cols:
-        logger.error(f"KPI_CALC: Raw sales data from Baserow is missing required columns: {missing_cols}")
-        return pd.DataFrame()
-
-    # Convert data types
-    all_raw_sales_df['Sale Date'] = pd.to_datetime(all_raw_sales_df['Sale Date'], errors='coerce').dt.date
-    all_raw_sales_df['Report Period Start Date'] = pd.to_datetime(all_raw_sales_df['Report Period Start Date'], errors='coerce').dt.date
-    all_raw_sales_df['Quantity Sold'] = pd.to_numeric(all_raw_sales_df['Quantity Sold'], errors='coerce').fillna(0)
-    all_raw_sales_df['Net Revenue'] = pd.to_numeric(all_raw_sales_df['Net Revenue'], errors='coerce').fillna(0)
-    
-    # Drop rows where critical dates couldn't be parsed
-    all_raw_sales_df.dropna(subset=['Sale Date'], inplace=True) # Sale Date is essential
 
     # --- Apply User Filters (Platform, Account, MSKU) ---
-    filtered_df = all_raw_sales_df.copy()
+    filtered_df = all_sales_df.copy()
     if platforms:
         filtered_df = filtered_df[filtered_df['Platform'].isin(platforms)]
     if accounts:
@@ -234,3 +200,64 @@ def get_sales_trend_data(daily_sales_df: pd.DataFrame, freq='D'):
     
     logger.info(f"KPI_CALC: Generated sales trend data with frequency '{freq}'.")
     return aggregated_trend
+
+
+def get_current_inventory(inventory_df: pd.DataFrame, msku_list: list = None) -> pd.DataFrame:
+    """
+    Filters the main inventory DataFrame for a list of MSKUs.
+    Returns a DataFrame with 'MSKU' and 'Current Inventory'.
+    """
+    if inventory_df is None or inventory_df.empty:
+        logger.warning("KPI_CALC: get_current_inventory called with empty inventory_df.")
+        return pd.DataFrame(columns=['MSKU', 'Current Inventory'])
+    
+    # Ensure required columns exist
+    if 'MSKU' not in inventory_df.columns or 'Current Inventory' not in inventory_df.columns:
+        logger.error("KPI_CALC: Inventory DataFrame missing 'MSKU' or 'Current Inventory' columns.")
+        return pd.DataFrame(columns=['MSKU', 'Current Inventory'])
+
+    if msku_list:
+        inventory_df = inventory_df[inventory_df['MSKU'].isin(msku_list)]
+    
+    return inventory_df[['MSKU', 'Current Inventory']].copy()
+
+
+def calculate_sales_velocity(daily_sales_df: pd.DataFrame, days_period: int) -> pd.Series:
+    """
+    Calculates average daily sales velocity per MSKU over a given period.
+    
+    Returns:
+        pd.Series: A Series with MSKU as index and Avg Daily Sales as values.
+    """
+    if daily_sales_df is None or daily_sales_df.empty:
+        logger.warning("KPI_CALC: calculate_sales_velocity called with empty daily_sales_df.")
+        return pd.Series(dtype=float)
+
+    # Ensure Sale Date is a date object for comparison
+    daily_sales_df['Sale Date'] = pd.to_datetime(daily_sales_df['Sale Date']).dt.date
+
+    # Determine the date range for velocity calculation
+    if daily_sales_df.empty:
+        return pd.Series(dtype=float)
+        
+    most_recent_sale_date = daily_sales_df['Sale Date'].max()
+    velocity_start_date = most_recent_sale_date - timedelta(days=days_period - 1)
+
+    # Filter for the velocity period
+    velocity_df = daily_sales_df[
+        (daily_sales_df['Sale Date'] >= velocity_start_date) & 
+        (daily_sales_df['Sale Date'] <= most_recent_sale_date)
+    ].copy()
+
+    if velocity_df.empty:
+        logger.warning(f"KPI_CALC: No sales data found in the last {days_period} days for velocity calculation.")
+        return pd.Series(dtype=float)
+
+    # Calculate total sales per MSKU in the period
+    total_sales_per_msku = velocity_df.groupby('MSKU')['Quantity Sold'].sum()
+
+    # Calculate average daily sales by dividing by the number of days in the period
+    avg_daily_sales = total_sales_per_msku / days_period
+    
+    logger.info(f"KPI_CALC: Calculated sales velocity for {len(avg_daily_sales)} MSKUs over {days_period} days.")
+    return avg_daily_sales

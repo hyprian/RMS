@@ -5,22 +5,18 @@ from datetime import datetime, timedelta, date
 import os
 import sys
 
-# Adjust project_root to be the actual RMS directory
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path: sys.path.insert(0, project_root)
 
 from utils.config_loader import APP_CONFIG
 from data_processing.baserow_fetcher import BaserowFetcher
+from analytics_dashboard.data_loader import load_and_cache_analytics_data # NEW
 from analytics_dashboard.kpi_calculations import (
-    get_sales_data, 
+    process_sales_data_for_analytics as get_sales_data, # Use the new name
     calculate_total_sales_kpis,
     get_sales_trend_data
 )
-from analytics_dashboard.charts import (
-    create_sales_trend_chart,
-    create_pie_chart, # For platform/account breakdown
-    create_bar_chart
-)
+from analytics_dashboard.charts import create_sales_trend_chart, create_pie_chart
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,9 +24,10 @@ logger = logging.getLogger(__name__)
 st.set_page_config(page_title="Product Performance - RMS", layout="wide")
 st.title("📦 Product Performance Analysis")
 
-# --- Initialize Tools & Config ---
+# --- Initialize Tools & Load Data into Session State ---
 @st.cache_resource
-def get_analytics_fetcher_prod(): # Renamed to avoid conflict if caching is per-page
+def get_analytics_fetcher_prod():
+    # ... (same as before) ...
     try:
         fetcher = BaserowFetcher(api_token=APP_CONFIG['baserow']['api_token'], base_url=APP_CONFIG['baserow'].get('base_url'))
         return fetcher
@@ -39,99 +36,65 @@ def get_analytics_fetcher_prod(): # Renamed to avoid conflict if caching is per-
         return None
 
 fetcher = get_analytics_fetcher_prod()
-if not fetcher:
-    st.error("Failed to initialize Baserow connection for analytics. Check configuration.")
-    st.stop()
+if not fetcher: st.error("Failed to initialize Baserow connection."); st.stop()
 
 processed_sales_table_id = APP_CONFIG['baserow'].get('processed_sales_data_table_id')
-inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id') # For MSKU list and current inventory
+inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
 
-if not processed_sales_table_id:
-    st.error("`processed_sales_data_table_id` is not configured in settings.yaml. Cannot display analytics.")
+# Load all data once per session. This is the key performance improvement.
+load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id)
+
+# Now, get data from session state instead of fetching again
+all_sales_df = st.session_state.get('analytics_sales_df')
+all_inventory_df = st.session_state.get('analytics_inventory_df')
+
+if all_sales_df is None or all_sales_df.empty:
+    st.warning("No sales data available. Please upload sales reports on the 'Sales Data Ingestion' page.")
     st.stop()
 
-# --- Function to get a list of all unique MSKUs from sales or inventory data ---
-@st.cache_data(ttl=3600) # Cache for an hour
-def get_all_mskust(_fetcher, _sales_table_id, _inventory_table_id):
-    logger.info("Fetching all unique MSKUs...")
-    all_mskust = set()
-    
-    # Try from sales data first
-    sales_df = _fetcher.get_table_data_as_dataframe(_sales_table_id) # Fetches all columns
-    if sales_df is not None and not sales_df.empty and 'MSKU' in sales_df.columns:
-        all_mskust.update(sales_df['MSKU'].dropna().unique())
-    
-    # Optionally, also get from inventory table to include MSKUs with no sales yet
-    if _inventory_table_id:
-        inventory_df = _fetcher.get_inventory_data(_inventory_table_id) # Assumes this returns 'MSKU' column
-        if inventory_df is not None and not inventory_df.empty and 'MSKU' in inventory_df.columns:
-            all_mskust.update(inventory_df['MSKU'].dropna().unique())
-            
-    sorted_mskust = sorted(list(m for m in all_mskust if m and pd.notna(m))) # Filter out None/NaN and sort
-    logger.info(f"Found {len(sorted_mskust)} unique MSKUs.")
-    return sorted_mskust
-
-all_available_mskust = get_all_mskust(fetcher, processed_sales_table_id, inventory_table_id)
+# --- MSKU Selector ---
+# Get unique MSKUs directly from the in-memory DataFrame, which is much faster
+sales_mskust = set(all_sales_df['MSKU'].dropna().unique())
+inventory_mskust = set()
+if all_inventory_df is not None and not all_inventory_df.empty and 'MSKU' in all_inventory_df.columns:
+    inventory_mskust = set(all_inventory_df['MSKU'].dropna().unique())
+all_available_mskust = sorted(list(sales_mskust | inventory_mskust))
 
 if not all_available_mskust:
-    st.warning("No MSKUs found in sales or inventory data. Cannot display product performance.")
+    st.warning("No MSKUs found. Cannot display product performance.")
     st.stop()
 
 # --- Sidebar Filters ---
 st.sidebar.header("Product Filters")
-
-selected_msku = st.sidebar.selectbox(
-    "Select MSKU:", 
-    options=all_available_mskust, 
-    key="product_perf_msku_select",
-    index=0 if all_available_mskust else None # Select first by default if list is not empty
-)
-
-# Date Range Filter (same as overview page)
+selected_msku = st.sidebar.selectbox("Select MSKU:", options=all_available_mskust, key="product_perf_msku_select")
 default_end_date_prod = date.today()
-default_start_date_prod = default_end_date_prod - timedelta(days=89) # Default to last 90 days for product view
-
+default_start_date_prod = default_end_date_prod - timedelta(days=89)
 selected_start_date_prod = st.sidebar.date_input("Start Date", value=default_start_date_prod, key="product_perf_start_date")
 selected_end_date_prod = st.sidebar.date_input("End Date", value=default_end_date_prod, key="product_perf_end_date")
+if selected_start_date_prod > selected_end_date_prod: st.sidebar.error("Start Date cannot be after End Date."); st.stop()
 
-if selected_start_date_prod > selected_end_date_prod:
-    st.sidebar.error("Start Date cannot be after End Date."); st.stop()
-
-# --- Display MSKU Name and Current Inventory (Optional) ---
-if selected_msku and inventory_table_id:
-    # You might want a function to get specific product details
-    # For now, let's try to get current inventory
-    inventory_df_all = fetcher.get_inventory_data(inventory_table_id) # This fetches all inventory
-    if inventory_df_all is not None and not inventory_df_all.empty and 'MSKU' in inventory_df_all.columns:
-        msku_inventory_row = inventory_df_all[inventory_df_all['MSKU'] == selected_msku]
+# --- Display MSKU Info (from session state) ---
+if selected_msku:
+    st.header(f"Performance for MSKU: {selected_msku}")
+    if all_inventory_df is not None and not all_inventory_df.empty:
+        msku_inventory_row = all_inventory_df[all_inventory_df['MSKU'] == selected_msku]
         if not msku_inventory_row.empty:
             current_inv = msku_inventory_row['Current Inventory'].iloc[0]
-            # product_name = msku_inventory_row['Product Name'].iloc[0] # If you have a Product Name field
-            st.header(f"Performance for MSKU: {selected_msku}")
             st.metric("Current Inventory", f"{current_inv:,.0f} units")
-        else:
-            st.header(f"Performance for MSKU: {selected_msku}")
-            st.info("Inventory data not found for this MSKU.")
-    else:
-        st.header(f"Performance for MSKU: {selected_msku}")
-else:
-    st.header(f"Performance for MSKU: {selected_msku}")
-
+        else: st.info("Inventory data not found for this MSKU.")
+else: st.header("Select an MSKU from the sidebar")
 
 st.divider()
 
-# --- Fetch and Process Data for Selected MSKU ---
+# --- Process Data for Selected MSKU (using in-memory DataFrame) ---
 if selected_msku:
-    with st.spinner(f"Loading analytics for MSKU {selected_msku} from {selected_start_date_prod.strftime('%Y-%m-%d')} to {selected_end_date_prod.strftime('%Y-%m-%d')}..."):
-        sales_df_msku_daily = get_sales_data(
-            fetcher,
-            processed_sales_table_id,
-            selected_start_date_prod,
-            selected_end_date_prod,
-            mskust_list=[selected_msku] # Filter by the selected MSKU
-            # platforms=None, # Can add platform/account filters here too if desired for product page
-            # accounts=None
-        )
+    # This now just filters the already loaded DataFrame, which is very fast.
+    sales_df_msku_daily = get_sales_data( # This is now the process_sales_data_for_analytics function
+        all_sales_df, # Pass the full DataFrame from session state
+        selected_start_date_prod,
+        selected_end_date_prod,
+        mskust_list=[selected_msku]
+    )
 
     if sales_df_msku_daily is None or sales_df_msku_daily.empty:
         st.warning(f"No sales data found for MSKU '{selected_msku}' in the selected period.")
