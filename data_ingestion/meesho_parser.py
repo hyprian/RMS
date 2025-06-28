@@ -56,7 +56,7 @@ class MeeshoSalesParser:
         
         # Column names from Meesho sample - make these configurable via report_settings if they vary
         status_col = self.account_config.get('report_settings', {}).get('status_column', "Reason for Credit Entry")
-        valid_statuses = self.account_config.get('report_settings', {}).get('valid_sale_statuses', ["SHIPPED"])
+        valid_statuses = self.account_config.get('report_settings', {}).get('valid_sale_statuses', ["SHIPPED","DELIVERED","RTO_COMPLETE","DOOR_STEP_EXCHANGED","RTO_OFD"])
         date_col = self.account_config.get('report_settings', {}).get('date_column', "Order Date")
         revenue_col = self.account_config.get('report_settings', {}).get('revenue_column', "Supplier Discounted Price (Incl GST and Commision)")
         order_id_col = "Sub Order No" # From sample
