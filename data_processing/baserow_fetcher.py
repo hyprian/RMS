@@ -595,14 +595,15 @@ class BaserowFetcher:
             
         return overall_success # Returns True if all attempts were successful (or row not found), False if any actual deletion error occurred for an existing row or if any ID was invalid.
 
-    def get_row_ids_for_range_deletion(self, table_id, platform, account_name, start_date_str, end_date_str):
+    def get_row_ids_for_range_deletion(self, table_id, start_date_str, end_date_str, platform=None, account_name=None):
         """
-        Fetches all row IDs for a given platform, account (optional), and date range.
+        Fetches all row IDs for a given date range, with optional platform and account filters.
         If platform or account_name is None, it means "all" for that dimension.
-        WARNING: Use with extreme caution.
+        WARNING: Use with caution, as this can fetch many IDs.
         """
         logger.warning(f"Fetching ALL row IDs for range deletion: T:{table_id}, P:{platform}, A:{account_name}, {start_date_str}-{end_date_str}")
         
+        # Build the filter string for the API call
         filters = []
         if platform:
             filters.append(f"filter__Platform__equal={requests.utils.quote(platform)}")
@@ -617,9 +618,8 @@ class BaserowFetcher:
         
         all_matching_rows = []
         page = 1
-        # Fetch all rows matching the criteria, page by page
-        # The URL needs to be constructed carefully.
-        # We only need the 'id' field. Add 'field_ids=id_field_number' if you know it.
+        # We only need the 'id' field, but fetching all is simpler with get_table_data_as_dataframe
+        # Let's construct a paginated fetch manually to be more efficient.
         base_url_for_list = f"{self.base_url}/api/database/rows/table/{table_id}/?user_field_names=true&size=200"
         if filter_params:
             base_url_for_list += f"&{filter_params}"
@@ -647,7 +647,68 @@ class BaserowFetcher:
                 logger.error(f"JSON decode error fetching rows for range deletion: {e}. Response: {response.text[:500]}")
                 return []
 
-
         row_ids = [row['id'] for row in all_matching_rows if 'id' in row]
         logger.info(f"Found {len(row_ids)} row IDs for range deletion criteria.")
         return row_ids
+    
+    def batch_delete_rows(self, table_id, row_ids_to_delete):
+        """
+        Deletes rows in batches of 200 to comply with Baserow API limits.
+        This is the fast and preferred method.
+        """
+        if not row_ids_to_delete:
+            logger.info(f"Table {table_id}: No row IDs provided for batch deletion.")
+            return True
+
+        valid_row_ids = []
+        for rid in row_ids_to_delete:
+            try:
+                valid_row_ids.append(int(rid))
+            except (ValueError, TypeError):
+                logger.warning(f"Table {table_id}: Invalid non-integer row ID '{rid}' skipped for batch deletion.")
+        
+        if not valid_row_ids:
+            logger.info(f"Table {table_id}: No valid integer row IDs for batch deletion.")
+            return True
+
+        logger.info(f"Table {table_id}: Starting FAST BATCH DELETE for a total of {len(valid_row_ids)} rows.")
+        
+        url = f"{self.base_url}/api/database/rows/table/{table_id}/batch-delete/"
+        
+        # --- CHUNKING LOGIC ---
+        batch_size = 200 # Baserow's limit
+        overall_success = True
+
+        for i in range(0, len(valid_row_ids), batch_size):
+            chunk_of_ids = valid_row_ids[i:i + batch_size]
+            
+            logger.info(f"Table {table_id}: Deleting chunk {i//batch_size + 1}, containing {len(chunk_of_ids)} row IDs.")
+            
+            payload = {"items": chunk_of_ids}
+            
+            response = None
+            try:
+                logger.debug(f"Table {table_id}: Sending POST to {url} with payload: {json.dumps(payload)}")
+                response = requests.post(url, headers=self.headers, json=payload)
+                
+                if not response.ok:
+                    logger.error(f"Table {table_id}: Batch delete API call for chunk failed. Status: {response.status_code}, Response: {response.text}")
+                
+                response.raise_for_status()
+                
+                logger.info(f"Table {table_id}: Successfully submitted batch delete request for chunk. Status: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Table {table_id}: FAST BATCH DELETE FAILED for a chunk. Error: {e}", exc_info=False)
+                if response is not None:
+                    logger.error(f"Table {table_id}: Failing response content: {response.text}")
+                overall_success = False # Mark the entire operation as failed
+                # You could choose to stop here or continue with other chunks
+                # For now, let's stop on the first failed chunk.
+                break 
+        
+        if not overall_success:
+            logger.error(f"Table {table_id}: One or more chunks failed to delete. The operation was aborted.")
+        else:
+            logger.info(f"Table {table_id}: All chunks processed successfully for deletion.")
+
+        return overall_success
