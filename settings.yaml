@@ -19,10 +19,8 @@ platforms:
   accounts:
   - name: Main Account
     slug: main
-    sku_column: SKU
-    quantity_columns:
-    - Units Ordered
-    - Units Ordered - B2B
+    sku_column: Sku
+    quantity_columns: Quantity
 - name: Flipkart
   slug: flipkart
   accounts:
