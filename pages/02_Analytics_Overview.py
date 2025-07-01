@@ -47,6 +47,7 @@ if not fetcher:
 
 processed_sales_table_id = APP_CONFIG['baserow'].get('processed_sales_data_table_id')
 inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
+category_table_id = APP_CONFIG['baserow'].get('category_table_id')
 
 if not processed_sales_table_id:
     st.error("`processed_sales_data_table_id` is not configured in settings.yaml. Cannot display analytics.")
@@ -63,12 +64,13 @@ if 'force_reload_analytics' not in st.session_state:
 if st.sidebar.button("Force Reload Data from Baserow"):
     st.session_state.force_reload_analytics = True
 
-load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, force_reload=st.session_state.force_reload_analytics)
+load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id, force_reload=st.session_state.force_reload_analytics)
 # Reset the flag after use
 st.session_state.force_reload_analytics = False
 
 # Now, get the pre-loaded data from session state
 all_sales_df = st.session_state.get('analytics_sales_df')
+all_category_df = st.session_state.get('analytics_category_df') 
 
 # --- Sidebar Filters ---
 st.sidebar.header("Filters")
@@ -122,6 +124,13 @@ else:
         accounts=filter_accounts
     )
 
+    # --- NEW: Merge category data into the daily sales data for analytics ---
+    if all_category_df is not None and not all_category_df.empty:
+        sales_df_daily = pd.merge(sales_df_daily, all_category_df, on='MSKU', how='left')
+        sales_df_daily['Category'].fillna('Uncategorized', inplace=True)
+    else:
+        sales_df_daily['Category'] = 'N/A'
+
     if sales_df_daily.empty:
         st.warning(f"No sales data found for the selected filters and period ({selected_start_date.strftime('%Y-%m-%d')} to {selected_end_date.strftime('%Y-%m-%d')}).")
     else:
@@ -153,6 +162,20 @@ else:
         st.divider()
 
         st.header("Sales Breakdown")
+
+        # --- NEW: Add Category Breakdown ---
+        st.subheader("By Category")
+        if 'Category' in sales_df_daily.columns:
+            category_sales = sales_df_daily.groupby('Category', as_index=False)['Net Revenue'].sum().sort_values(by='Net Revenue', ascending=False)
+            if not category_sales.empty:
+                fig_category_bar = create_bar_chart(
+                    category_sales, x_column='Category', y_column='Net Revenue',
+                    y_column_name='Net Revenue (₹)', title='Revenue by Product Category'
+                )
+                st.plotly_chart(fig_category_bar, use_container_width=True)
+        
+        st.divider()
+        
         col_plat, col_acc = st.columns(2)
 
         with col_plat:

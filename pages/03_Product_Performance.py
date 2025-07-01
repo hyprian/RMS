@@ -40,13 +40,15 @@ if not fetcher: st.error("Failed to initialize Baserow connection."); st.stop()
 
 processed_sales_table_id = APP_CONFIG['baserow'].get('processed_sales_data_table_id')
 inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
+category_table_id = APP_CONFIG['baserow'].get('category_table_id') # Get the category table ID
 
 # Load all data once per session. This is the key performance improvement.
-load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id)
+load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id)
 
 # Now, get data from session state instead of fetching again
 all_sales_df = st.session_state.get('analytics_sales_df')
 all_inventory_df = st.session_state.get('analytics_inventory_df')
+all_category_df = st.session_state.get('analytics_category_df') 
 
 if all_sales_df is None or all_sales_df.empty:
     st.warning("No sales data available. Please upload sales reports on the 'Sales Data Ingestion' page.")
@@ -76,6 +78,15 @@ if selected_start_date_prod > selected_end_date_prod: st.sidebar.error("Start Da
 # --- Display MSKU Info (from session state) ---
 if selected_msku:
     st.header(f"Performance for MSKU: {selected_msku}")
+    # Display Category
+    if all_category_df is not None and not all_category_df.empty:
+        msku_category_row = all_category_df[all_category_df['MSKU'] == selected_msku]
+        if not msku_category_row.empty:
+            category_name = msku_category_row['Category'].iloc[0]
+            st.markdown(f"**Category:** `{category_name}`")
+        else:
+            st.markdown(f"**Category:** `Uncategorized`")
+
     if all_inventory_df is not None and not all_inventory_df.empty:
         msku_inventory_row = all_inventory_df[all_inventory_df['MSKU'] == selected_msku]
         if not msku_inventory_row.empty:

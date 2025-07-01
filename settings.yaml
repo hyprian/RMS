@@ -1,66 +1,55 @@
 baserow:
-  base_url: "https://api.baserow.io" 
+  base_url: https://api.baserow.io
   api_token: 9UCN23rsBlOxh23U3nGt61yCfCnDFZWq
-  sku_mapping_table_id: 584472 
-  combo_sku_table_id: 584474   
+  sku_mapping_table_id: 588371
+  combo_sku_table_id: 588370
   inventory_table_id: 588340
   processed_sales_data_table_id: 581245
-
+  category_table_id: 591682 
 cache:
-  directory: ".rms_cache" 
+  directory: .rms_cache
   expiry_days: 5
-
 logging:
-  level: "INFO" 
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file_name: "rms_app.log" 
-
-# Platform configurations for uploading sales data
+  level: INFO
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  file_name: rms_app.log
 platforms:
-  - name: "Amazon"      # Display name in UI
-    slug: "amazon"      # Used for directory naming
-    accounts:
-      - name: "Main Account" # Display name for the account
-        slug: "main"        # Used for directory naming
-        sku_column: "SKU"   # Expected SKU column in Amazon reports
-        quantity_columns: ["Units Ordered", "Units Ordered - B2B"] # Expected quantity column
-  - name: "Flipkart"
-    slug: "flipkart"
-    accounts:
-      - name: "Account CSTE (FK)"
-        slug: "fk_acc_CSTE"
-        sku_column: "SKU ID" # Adjust if different for Flipkart
-        quantity_column: "Final Sale Units"
-      - name: "Account Giantleap (FK)"
-        slug: "fk_acc_giantleap"
-        sku_column: "SKU ID"
-        quantity_column: "Final Sale Units"
-  - name: "Meesho"
-    slug: "meesho"
-    accounts:
-      - name: "Account CSTE (MS)"
-        slug: "ms_acc_CSTE"
-        sku_column: "SKU" # Adjust if different for Meesho
-        quantity_column: "Quantity"
-      - name: "Account Rudra (MS)"
-        slug: "ms_acc_rudra"
-        sku_column: "SKU"
-        quantity_column: "Quantity"
-
-# Define expected columns for sales reports (can be overridden per platform/account)
-# These are just examples, you'll need to confirm actual column names.
+- name: Amazon
+  slug: amazon
+  accounts:
+  - name: Main Account
+    slug: main
+    sku_column: SKU
+    quantity_columns:
+    - Units Ordered
+    - Units Ordered - B2B
+- name: Flipkart
+  slug: flipkart
+  accounts:
+  - name: Account CSTE (FK)
+    slug: fk_acc_CSTE
+    sku_column: SKU ID
+    quantity_column: Final Sale Units
+  - name: Account Giantleap (FK)
+    slug: fk_acc_giantleap
+    sku_column: SKU ID
+    quantity_column: Final Sale Units
+- name: Meesho
+  slug: meesho
+  accounts:
+  - name: Account CSTE (MS)
+    slug: ms_acc_CSTE
+    sku_column: SKU
+    quantity_column: Quantity
+  - name: Account Rudra (MS)
+    slug: ms_acc_rudra
+    sku_column: SKU
+    quantity_column: Quantity
 default_sales_report_columns:
-  sku_column: "SKU"
-  quantity_column: "Quantity"
-  # date_column: "Order Date" # If you need to filter sales by date from the report itself
-
+  sku_column: SKU
+  quantity_column: Quantity
 data_paths:
-  uploaded_sales_root: "uploaded_data"
-  sales_reports_subdir: "sales" # Subdirectory under uploaded_sales_root
-
-# For the final replenishment table
+  uploaded_sales_root: uploaded_data
+  sales_reports_subdir: sales
 replenishment_table:
-  feature_date_format: "%d-%b-%Y" # e.g., 01-Mar-2025
-  # Default values or calculation parameters can go here later
-  # default_buffer_stock_days: 15
-  # default_marketing_stock_percentage: 0.10
+  feature_date_format: '%d-%b-%Y'

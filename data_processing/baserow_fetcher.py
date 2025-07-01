@@ -712,3 +712,37 @@ class BaserowFetcher:
             logger.info(f"Table {table_id}: All chunks processed successfully for deletion.")
 
         return overall_success
+    
+    def get_category_data(self, table_id):
+        """
+        Fetches product category data from Baserow.
+        Assumes columns 'Msku' and 'Category'.
+        """
+        logger.info(f"Fetching category data from table {table_id}")
+        
+        # These are the columns we need from this specific table
+        required_cols = ['Msku', 'Category'] # Add other columns like 'Cost' if needed for other features
+        
+        # Use the generic get_table_data_as_dataframe method
+        df = self.get_table_data_as_dataframe(table_id, required_columns=required_cols)
+        
+        if df.empty:
+            logger.warning(f"No category data fetched or table {table_id} was empty.")
+            return pd.DataFrame(columns=required_cols)
+
+        # Clean the data
+        df['MSKU'] = df['Msku'].astype(str).str.strip() # Standardize to 'MSKU'
+        df.dropna(subset=['MSKU'], inplace=True)
+        df = df[df['MSKU'] != '']
+
+        # Select only the columns we need for now to keep it clean
+        # If you need COGS from here later, you can add 'Cost Inc.GST' etc.
+        final_df = df[['MSKU', 'Category']].copy()
+        
+        # Handle duplicate MSKUs in the category table - take the first one found
+        if final_df['MSKU'].duplicated().any():
+            logger.warning(f"Duplicate MSKUs found in category table {table_id}. Keeping the first entry for each.")
+            final_df.drop_duplicates(subset=['MSKU'], keep='first', inplace=True)
+            
+        logger.info(f"Successfully processed {len(final_df)} unique MSKU category records.")
+        return final_df

@@ -42,14 +42,17 @@ if not fetcher:
 
 processed_sales_table_id = APP_CONFIG['baserow'].get('processed_sales_data_table_id')
 inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
+category_table_id = APP_CONFIG['baserow'].get('category_table_id')
 
 if not processed_sales_table_id:
     st.error("`processed_sales_data_table_id` is not configured. Cannot display analytics.")
     st.stop()
 
 # Central data loading for performance
-load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id)
+load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id)
 all_sales_df = st.session_state.get('analytics_sales_df')
+all_category_df = st.session_state.get('analytics_category_df')
+
 
 # --- Sidebar Filters ---
 st.sidebar.header("Filters")
@@ -61,13 +64,31 @@ selected_end_date = st.sidebar.date_input("End Date", value=default_end_date, ke
 if selected_start_date > selected_end_date:
     st.sidebar.error("Start Date cannot be after End Date."); st.stop()
 
+if all_category_df is not None and not all_category_df.empty:
+    category_options = ["All Categories"] + sorted(all_category_df['Category'].unique().tolist())
+    selected_category_filter = st.sidebar.multiselect("Filter by Category", options=category_options, default=["All Categories"])
+else:
+    selected_category_filter = []
+
 # --- Process Data (based on date filter only, for platform comparisons) ---
 if all_sales_df is None or all_sales_df.empty:
     st.warning("No sales data available. Please upload sales reports on the 'Sales Data Ingestion' page.")
 else:
-    # Get the daily-equivalent data for the selected period
+    # Merge category data first
+    if all_category_df is not None and not all_category_df.empty:
+        sales_df_with_cat = pd.merge(all_sales_df, all_category_df, on='MSKU', how='left')
+        sales_df_with_cat['Category'].fillna('Uncategorized', inplace=True)
+    else:
+        sales_df_with_cat = all_sales_df.copy()
+        sales_df_with_cat['Category'] = 'N/A'
+
+    # Apply category filter if selected
+    if selected_category_filter and "All Categories" not in selected_category_filter:
+        sales_df_with_cat = sales_df_with_cat[sales_df_with_cat['Category'].isin(selected_category_filter)]
+
+    # Now pass this potentially category-filtered DataFrame to get_sales_data
     sales_df_daily = get_sales_data(
-        all_sales_df,
+        sales_df_with_cat, # Use the df that now includes categories
         selected_start_date,
         selected_end_date
     )
