@@ -6,6 +6,7 @@ baserow:
   inventory_table_id: 588340
   processed_sales_data_table_id: 581245
   category_table_id: 591682 
+  purchase_orders_table_id: 593158
 cache:
   directory: .rms_cache
   expiry_days: 5
