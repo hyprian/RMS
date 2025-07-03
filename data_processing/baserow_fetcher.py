@@ -721,7 +721,7 @@ class BaserowFetcher:
         logger.info(f"Fetching category data from table {table_id}")
         
         # These are the columns we need from this specific table
-        required_cols = ['Msku', 'Category'] # Add other columns like 'Cost' if needed for other features
+        required_cols = ['Msku', 'Category' , 'HSN Code'] # Add other columns like 'Cost' if needed for other features
         
         # Use the generic get_table_data_as_dataframe method
         df = self.get_table_data_as_dataframe(table_id, required_columns=required_cols)
@@ -737,7 +737,7 @@ class BaserowFetcher:
 
         # Select only the columns we need for now to keep it clean
         # If you need COGS from here later, you can add 'Cost Inc.GST' etc.
-        final_df = df[['MSKU', 'Category']].copy()
+        final_df = df[['MSKU', 'Category','HSN Code']].copy()
         
         # Handle duplicate MSKUs in the category table - take the first one found
         if final_df['MSKU'].duplicated().any():

@@ -49,6 +49,14 @@ if 'analytics_category_df' not in st.session_state:
 all_pos_df = st.session_state.get('po_all_pos_df', pd.DataFrame())
 all_category_df = st.session_state.get('analytics_category_df', pd.DataFrame())
 
+# # --- TEMPORARY DEBUGGING ---
+# if 'debug_cols_printed' not in st.session_state:
+#     if all_category_df is not None and not all_category_df.empty:
+#         st.warning("Debugging: Columns available in `all_category_df`:")
+#         st.write(all_category_df.columns.tolist())
+#     st.session_state.debug_cols_printed = True
+# # --- END TEMPORARY DEBUGGING ---
+
 # --- Initialize Form State ---
 if 'po_draft_items' not in st.session_state:
     st.session_state.po_draft_items = []
@@ -202,7 +210,7 @@ if st.button("Create Purchase Order in Baserow", type="primary", disabled=not st
             
             for item in st.session_state.po_draft_items:
                 line_item_data = {
-                    "Po No": final_po_number,
+                    "Po No.": final_po_number,
                     "Vendor Name": final_vendor_name,
                     "Order Date": final_order_date.strftime('%d-%b-%Y'), # Using correct format
                     "Arrive by": final_arrive_by_date.strftime('%d-%b-%Y'), # Using correct format

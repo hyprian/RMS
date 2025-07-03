@@ -113,15 +113,23 @@ def get_msku_details(category_df: pd.DataFrame, msku: str) -> dict:
     """
     Fetches details like Category and HSN code for a given MSKU from the cached category DataFrame.
     """
-    if category_df is None or category_df.empty:
+    if category_df is None or category_df.empty or not msku:
         return {}
     
     msku_details = category_df[category_df['MSKU'] == msku]
     if msku_details.empty:
         return {}
     
-    # Return the first row as a dictionary
-    return msku_details.iloc[0].to_dict()
+    # Convert the first matching row to a dictionary
+    first_row_dict = msku_details.iloc[0].to_dict()
+    
+    details_to_return = {
+        'Category': first_row_dict.get('Category', ''),
+        'HSN Code': first_row_dict.get('HSN Code', '') 
+    }
+    
+    logger.debug(f"Fetched details for {msku}: {details_to_return}")
+    return details_to_return
 
 def generate_po_number() -> str:
     """Generates a new, unique PO Number."""
