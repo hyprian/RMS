@@ -1,12 +1,25 @@
 baserow:
   base_url: https://api.baserow.io
-  api_token: 9UCN23rsBlOxh23U3nGt61yCfCnDFZWq
-  sku_mapping_table_id: 588371
-  combo_sku_table_id: 588370
-  inventory_table_id: 588340
-  processed_sales_data_table_id: 581245
-  category_table_id: 591682 
-  purchase_orders_table_id: 593158
+  api_token: w5YLuEJF6pTm2HfrmlFBQpJYRhMiurdG
+  sku_mapping_table_id: 598590
+  combo_sku_table_id: 598588
+  inventory_table_id: 598587
+  processed_sales_data_table_id: 598432
+  category_table_id: 598433
+  purchase_orders_table_id: 598617
+  inventory_warehouse_columns:
+  - TLCQ
+  - PNQ2
+  - DEL4
+  - CCX1
+  - BLR8
+  - BOM7
+  - BLR7
+  - BOM5
+  - CCU1
+  - DEL5
+  - DEX3
+  - PNQ3
 cache:
   directory: .rms_cache
   expiry_days: 5

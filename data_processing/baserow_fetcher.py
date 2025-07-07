@@ -5,6 +5,7 @@ import pandas as pd
 import logging
 import json # Make sure json is imported
 import os
+from utils.config_loader import APP_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -172,53 +173,55 @@ class BaserowFetcher:
 
     def get_inventory_data(self, table_id):
         """
-        Fetches inventory data from Baserow.
-        Expects 'msku' and 'TLCQ' (Total Live Current Quantity) from Baserow.
-        Renames them to 'MSKU' and 'Current Inventory'.
-        Adds blank 'Images', 'Category', 'Code' columns.
+        Fetches inventory data from Baserow and aggregates stock from multiple warehouse columns.
+        Warehouse columns are defined in settings.yaml under baserow.inventory_warehouse_columns.
         """
-        # Baserow column names we expect for inventory
-        baserow_inventory_cols = ['msku', 'TLCQ'] 
-        # Target column names in our application
-        target_col_mapping = {
-            'msku': 'MSKU',
-            'TLCQ': 'Current Inventory'
-        }
-        logger.info(f"Fetching inventory data from table {table_id}. Expecting Baserow columns: {baserow_inventory_cols}")
+        logger.info(f"Fetching inventory data from table {table_id} for multiple warehouses.")
 
+        # --- MODIFICATION: Get warehouse columns from config ---
+        warehouse_columns = APP_CONFIG.get('baserow', {}).get('inventory_warehouse_columns', ['TLCQ']) # Default to TLCQ if not configured
+        if not warehouse_columns:
+            logger.error("`inventory_warehouse_columns` is not defined or empty in settings.yaml. Defaulting to ['TLCQ'].")
+            warehouse_columns = ['TLCQ']
+            
+        # The only required column from Baserow is 'msku' plus at least one warehouse column.
+        # We will fetch all warehouse columns plus 'msku'.
+        baserow_inventory_cols = ['msku'] + warehouse_columns
+        
+        # We don't need a target_col_mapping here, as we'll be creating 'Current Inventory' ourselves.
         df = self.get_table_data_as_dataframe(
             table_id, 
-            required_columns=baserow_inventory_cols,
-            column_mapping=target_col_mapping
+            required_columns=baserow_inventory_cols
         )
         
         if df.empty:
             logger.warning(f"No inventory data fetched or table {table_id} was empty after processing.")
-            # Return empty DataFrame with the TARGET column names
-            return pd.DataFrame(columns=['MSKU', 'Current Inventory', 'Images', 'Category', 'Code'])
+            return pd.DataFrame(columns=['MSKU', 'Current Inventory']) # Return a minimal empty DataFrame
 
-        # Ensure 'MSKU' and 'Current Inventory' (which were mapped from msku, TLCQ) exist
-        if 'MSKU' not in df.columns:
-            logger.error(f"'MSKU' (mapped from 'msku') not found in processed inventory data for table {table_id}. Columns: {df.columns.tolist()}")
-            return pd.DataFrame(columns=['MSKU', 'Current Inventory', 'Images', 'Category', 'Code'])
-        if 'Current Inventory' not in df.columns:
-            logger.error(f"'Current Inventory' (mapped from 'TLCQ') not found in processed inventory data for table {table_id}. Columns: {df.columns.tolist()}")
-            # If MSKU exists but Current Inventory doesn't, we might still proceed but log a warning
-            df['Current Inventory'] = 0 # Default to 0 if mapping failed or column was missing post-map
-            logger.warning("Defaulted 'Current Inventory' to 0 due to missing mapped column.")
-
-
-        # Clean 'MSKU' and convert 'Current Inventory'
-        df['MSKU'] = df['MSKU'].astype(str).fillna('').str.strip()
-        df['Current Inventory'] = pd.to_numeric(df['Current Inventory'], errors='coerce').fillna(0)
-
-        # Add placeholder columns for Images, Category, Code
-        df['Images'] = ''
-        df['Category'] = ''
-        df['Code'] = ''
+        # --- MODIFICATION: Aggregate stock from all warehouse columns ---
+        # Ensure all warehouse columns exist, fill missing ones with 0
+        for col in warehouse_columns:
+            if col not in df.columns:
+                logger.warning(f"Warehouse column '{col}' from settings.yaml not found in inventory table. Treating as 0.")
+                df[col] = 0
+            else:
+                # Convert each warehouse column to numeric, coercing errors to NaN, then filling NaN with 0
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
-        # Select and reorder to the final expected structure for the application
-        final_inventory_cols = ['MSKU', 'Current Inventory', 'Images', 'Category', 'Code']
+        # Sum across all warehouse columns to create the total 'Current Inventory'
+        df['Current Inventory'] = df[warehouse_columns].sum(axis=1)
+        
+        # --- END MODIFICATION ---
+
+        # Standardize MSKU column name
+        df.rename(columns={'msku': 'MSKU'}, inplace=True)
+
+        # Clean 'MSKU' and ensure 'Current Inventory' is an integer
+        df['MSKU'] = df['MSKU'].astype(str).fillna('').str.strip()
+        df['Current Inventory'] = df['Current Inventory'].astype(int)
+
+        # Select the final columns we need for the app. We don't need the individual warehouse columns anymore.
+        final_inventory_cols = ['MSKU', 'Current Inventory']
         df = df[final_inventory_cols]
 
         # Drop rows where MSKU is empty after cleaning
@@ -231,15 +234,11 @@ class BaserowFetcher:
             logger.info(f"Processed inventory data for table {table_id}. Final records: {len(df)}.")
             if df['MSKU'].duplicated().any():
                 logger.warning(f"Duplicate 'MSKU' entries found in inventory data for table {table_id}. Aggregating inventory for duplicates.")
-                # If duplicates exist, sum their 'Current Inventory'. Other fields will take the first occurrence.
+                # If duplicates exist, sum their 'Current Inventory'.
                 df = df.groupby('MSKU', as_index=False).agg({
-                    'Current Inventory': 'sum',
-                    'Images': 'first', # Or some other logic if needed
-                    'Category': 'first',
-                    'Code': 'first'
+                    'Current Inventory': 'sum'
                 })
                 logger.info(f"Aggregated duplicate MSKUs. Inventory records after aggregation: {len(df)}.")
-
 
         return df
     
