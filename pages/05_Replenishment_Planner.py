@@ -6,6 +6,7 @@ import os
 import sys
 import numpy as np # Ensure numpy is imported for np.select, etc.
 from datetime import datetime, timedelta # Ensure timedelta is imported
+from utils.pdf_generator import generate_replenishment_pdf
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
 if project_root not in sys.path: sys.path.insert(0, project_root)
@@ -185,12 +186,44 @@ if 'replenishment_plan_df' in st.session_state and st.session_state.replenishmen
             key="replenishment_editor_final"
         )
         
-        st.download_button(
-            "Download Plan as CSV",
-            edited_df.to_csv(index=False).encode('utf-8'),
-            f"replenishment_plan_{date.today().strftime('%Y%m%d')}.csv",
-            "text/csv",
-            key='download-replen-plan'
-        )
+        st.divider()
+        st.subheader("Download Plan")
+        
+        # --- DOWNLOAD LOGIC ---
+        col_dl1, col_dl2 = st.columns(2)
+        
+        with col_dl1:
+            # --- FIX for CSV Download ---
+            # Create a clean version of the DataFrame for CSV export
+            csv_export_df = edited_df.copy()
+            # Remove the icon from the status column
+            csv_export_df['Status'] = csv_export_df['Status'].str.replace(r'[^\w\s]', '', regex=True).str.strip()
+            # The 'Image URL' column already contains the link, which is fine for CSV.
+            
+            st.download_button(
+                "Download as CSV",
+                csv_export_df.to_csv(index=False).encode('utf-8'),
+                f"replenishment_plan_{date.today().strftime('%Y%m%d')}.csv",
+                "text/csv",
+                key='download-replen-plan-csv',
+                use_container_width=True
+            )
+
+        with col_dl2:
+            # --- NEW: PDF Download Button ---
+            if st.button("Generate & Download as PDF", key='generate-pdf-btn', use_container_width=True):
+                with st.spinner("Generating PDF... This may take a moment."):
+                    # We pass the `edited_df` to the generator so it includes user edits
+                    pdf_bytes = generate_replenishment_pdf(edited_df)
+                    if pdf_bytes:
+                        st.download_button(
+                            label="PDF Ready! Click to Download",
+                            data=pdf_bytes,
+                            file_name=f"replenishment_plan_{date.today().strftime('%Y%m%d')}.pdf",
+                            mime="application/pdf",
+                            key='download-replen-plan-pdf'
+                        )
+                    else:
+                        st.error("Failed to generate PDF. Check logs.")
     else:
-        st.success("Calculation complete. No items currently require replenishment based on the parameters.")
+        st.success("Calculation complete. No items currently require replenishment.")

@@ -4,3 +4,4 @@ requests
 streamlit 
 openpyxl
 plotly
+fpdf2  
