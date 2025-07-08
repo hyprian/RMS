@@ -71,6 +71,7 @@ if 'po_header_initialized' not in st.session_state:
     st.session_state.po_header_forwarder_select = ""
     st.session_state.po_header_forwarder_text = ""
     st.session_state.po_header_shipment_route = "Air"
+    st.session_state.po_header_projection_code = "00-00-001"
     st.session_state.po_header_initialized = True
 
 if 'line_item_msku' not in st.session_state:
@@ -130,6 +131,8 @@ with st.container(border=True):
         forwarder_select = st.selectbox("Forwarder", options=forwarder_options, key="po_header_forwarder_select")
         forwarder_text = st.text_input("Or, Enter New Forwarder:", key="po_header_forwarder_text")
         st.selectbox("Shipment Route", options=["Air", "Sea"], key="po_header_shipment_route")
+
+    st.text_input("Projection Code", key="po_header_projection_code", help="Enter the code in XX-XX-001 format.")
 
 # ... (Line Item section remains the same as the corrected version from last time) ...
 st.divider()
@@ -191,6 +194,8 @@ if st.button("Create Purchase Order in Baserow", type="primary", disabled=not st
     final_arrive_by_date = st.session_state.po_header_arrive_by
     final_forwarder = st.session_state.po_header_forwarder_text if st.session_state.po_header_forwarder_select == "" else st.session_state.po_header_forwarder_select
     final_shipment_route = st.session_state.po_header_shipment_route
+    final_projection_code = st.session_state.po_header_projection_code
+
 
     if not final_po_number or not final_vendor_name:
         st.error("PO Number and Vendor Name are required in the Header section.")
@@ -216,6 +221,7 @@ if st.button("Create Purchase Order in Baserow", type="primary", disabled=not st
                     "Arrive by": final_arrive_by_date.strftime('%d-%b-%Y'), # Using correct format
                     "Forwarder": final_forwarder,
                     "Shipment Route": final_shipment_route,
+                    "Projection Code": final_projection_code,
                     "Msku Code": item['MSKU'], "Category": item['Category'], "Quantity": str(item['Quantity']),
                     "USD Amt": str(item['USD Amt']), "INR Amt": str(item['INR Amt']),
                     "per pcs price usd": str(item['per pcs price usd']), "HSN Code": item['HSN Code'],

@@ -126,12 +126,12 @@ else:
         total_qty = po_group_df['Quantity'].sum()
         total_inr = po_group_df['INR Amt'].sum()
         order_date_str = header_info['Order Date'].strftime('%d-%b-%Y') if pd.notna(header_info['Order Date']) else 'N/A'
-        expander_label = f"**{po_number}** | Vendor: **{header_info['Vendor Name']}** | Status: **{header_info['Status']}** | Date: {order_date_str} | Total Qty: {total_qty:,.0f} | Value: ₹{total_inr:,.2f}"
-        
+        projection_code_str = header_info.get('Projection Code', 'N/A')
+        expander_label = f"**{po_number}** | Vendor: **{header_info['Vendor Name']}** | Proj. Code: **{projection_code_str}** | Status: **{header_info['Status']}** | Date: {order_date_str} | Qty: {total_qty:,.0f}"        
         with st.expander(expander_label):
             st.subheader(f"Details for PO: {po_number}")
             line_items_to_edit = po_group_df.copy()
-            display_cols = ['id', 'Msku Code', 'Category', 'Status', 'Quantity', 'INR Amt', 'Actual Receiving Date', 'GRN Status', 'Payment Status']
+            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'INR Amt', 'Actual Receiving Date', 'GRN Status', 'Payment Status']
             line_items_to_edit = line_items_to_edit[[col for col in display_cols if col in line_items_to_edit.columns]]
 
             edited_line_items_df = st.data_editor(
@@ -139,6 +139,7 @@ else:
                 column_config={
                     "id": None, "Msku Code": st.column_config.TextColumn(disabled=True),
                     "Category": st.column_config.TextColumn(disabled=True),
+                    "Projection Code": st.column_config.TextColumn("Proj. Code", help="The projection code for this PO line item."),
                     "Status": st.column_config.SelectboxColumn("Status", options=["Draft", "Sent For Approval", "Final Invoice Received", "Dispatched", "In Transit", "On Hold", "Received"], required=True),
                     "Actual Receiving Date": st.column_config.DateColumn("Actual Receiving Date", format="DD-MMM-YYYY"),
                     "GRN Status": st.column_config.SelectboxColumn("GRN Status", options=["Pending", "In-Process", "GRN Completed", "On Hold"]),
@@ -163,7 +164,18 @@ else:
                                     update_data['Actual Receiving Date'] = update_data['Actual Receiving Date'].strftime('%d-%b-%Y')
                                 for key, value in update_data.items():
                                     if isinstance(value, (int, float)): update_data[key] = str(value)
-                                if update_po_line_item(fetcher, po_table_id, row_id, update_data):
+
+                                final_payload = {
+                                    "Status": update_data.get("Status"),
+                                    "Actual Receiving Date": update_data.get("Actual Receiving Date"),
+                                    "GRN Status": update_data.get("GRN Status"),
+                                    "Payment Status": update_data.get("Payment Status"),
+                                    "Quantity": update_data.get("Quantity"),
+                                    "INR Amt": update_data.get("INR Amt"),
+                                    "Projection Code": update_data.get("Projection Code") # Add the key here
+                                }
+                                print(final_payload)
+                                if update_po_line_item(fetcher, po_table_id, row_id, final_payload):
                                     success_updates += 1
                                 else: st.error(f"Failed to update line item for MSKU: {update_data['Msku Code']} (Row ID: {row_id})")
                         if success_updates == num_changed:

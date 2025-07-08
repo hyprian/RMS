@@ -34,7 +34,7 @@ platforms:
   - name: Main Account
     slug: main
     sku_column: Sku
-    quantity_columns: Quantity
+    quantity_column: Quantity
 - name: Flipkart
   slug: flipkart
   accounts:
