@@ -43,11 +43,11 @@ inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
 category_table_id = APP_CONFIG['baserow'].get('category_table_id')
 catalogue_table_id = APP_CONFIG['baserow'].get('catalogue_table_id') 
 
-if not all([processed_sales_table_id, inventory_table_id, category_table_id]):
+if not all([processed_sales_table_id, inventory_table_id, category_table_id, catalogue_table_id]):
     st.error("`processed_sales_data_table_id`, `inventory_table_id`, and `category_table_id` must be configured in settings.yaml.")
     st.stop()
 
-load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id)
+load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id, catalogue_table_id)
 all_sales_df = st.session_state.get('analytics_sales_df')
 all_inventory_df = st.session_state.get('analytics_inventory_df')
 all_category_df = st.session_state.get('analytics_category_df')
