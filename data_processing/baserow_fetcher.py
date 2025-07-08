@@ -745,3 +745,38 @@ class BaserowFetcher:
             
         logger.info(f"Successfully processed {len(final_df)} unique MSKU category records.")
         return final_df
+
+    def get_catalogue_data(self, table_id):
+        """
+        Fetches product catalogue data, specifically MSKU and the first product image URL.
+        """
+        logger.info(f"Fetching catalogue data from table {table_id}")
+        
+        # We need 'msku' and the first image column.
+        # Your sample shows the column name is 'Product Image 1'.
+        required_cols = ['msku', 'Product Image 1']
+        
+        df = self.get_table_data_as_dataframe(table_id, required_columns=required_cols)
+        
+        if df.empty:
+            logger.warning(f"No catalogue data fetched or table {table_id} was empty.")
+            return pd.DataFrame(columns=['MSKU', 'Image URL'])
+
+        # Standardize column names for consistency
+        df.rename(columns={'msku': 'MSKU', 'Product Image 1': 'Image URL'}, inplace=True)
+        
+        # Clean the data
+        df['MSKU'] = df['MSKU'].astype(str).str.strip()
+        df.dropna(subset=['MSKU', 'Image URL'], inplace=True) # Drop rows where either MSKU or the image URL is missing
+        df = df[df['MSKU'] != '']
+
+        # Select only the columns we need
+        final_df = df[['MSKU', 'Image URL']].copy()
+        
+        # Handle duplicate MSKUs - take the first one found
+        if final_df['MSKU'].duplicated().any():
+            logger.warning(f"Duplicate MSKUs found in catalogue table {table_id}. Keeping the first image entry for each.")
+            final_df.drop_duplicates(subset=['MSKU'], keep='first', inplace=True)
+            
+        logger.info(f"Successfully processed {len(final_df)} unique MSKU image records.")
+        return final_df

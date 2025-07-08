@@ -5,7 +5,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def load_and_cache_analytics_data(fetcher, sales_table_id, inventory_table_id, category_table_id=None, force_reload=False):
+def load_and_cache_analytics_data(fetcher, sales_table_id, inventory_table_id, category_table_id=None, catalogue_table_id=None, force_reload=False):
     """
     Loads sales, inventory, and category data from Baserow into st.session_state.
     It will skip fetching for any table_id that is None.
@@ -45,3 +45,18 @@ def load_and_cache_analytics_data(fetcher, sales_table_id, inventory_table_id, c
                 st.session_state.analytics_category_df = category_df
             else:
                 st.session_state.analytics_category_df = pd.DataFrame()
+
+    if 'analytics_catalogue_df' not in st.session_state or force_reload:
+        logger.info("DATA_LOADER: No catalogue data in session state or force_reload=True. Fetching from Baserow...")
+        if catalogue_table_id:
+            with st.spinner("Loading product catalogue (images)..."):
+                catalogue_df = fetcher.get_catalogue_data(catalogue_table_id)
+                if catalogue_df is not None and not catalogue_df.empty:
+                    logger.info(f"DATA_LOADER: Catalogue data fetched ({len(catalogue_df)} rows). Caching.")
+                    st.session_state.analytics_catalogue_df = catalogue_df
+                else:
+                    st.session_state.analytics_catalogue_df = pd.DataFrame()
+                    logger.warning("DATA_LOADER: Fetched catalogue data is empty or None.")
+        else:
+             st.session_state.analytics_catalogue_df = pd.DataFrame()
+             logger.warning("DATA_LOADER: No catalogue table ID configured.")

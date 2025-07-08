@@ -41,6 +41,7 @@ if not fetcher: st.error("Failed to initialize Baserow connection."); st.stop()
 processed_sales_table_id = APP_CONFIG['baserow'].get('processed_sales_data_table_id')
 inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
 category_table_id = APP_CONFIG['baserow'].get('category_table_id')
+catalogue_table_id = APP_CONFIG['baserow'].get('catalogue_table_id') 
 
 if not all([processed_sales_table_id, inventory_table_id, category_table_id]):
     st.error("`processed_sales_data_table_id`, `inventory_table_id`, and `category_table_id` must be configured in settings.yaml.")
@@ -50,6 +51,7 @@ load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table
 all_sales_df = st.session_state.get('analytics_sales_df')
 all_inventory_df = st.session_state.get('analytics_inventory_df')
 all_category_df = st.session_state.get('analytics_category_df')
+all_catalogue_df = st.session_state.get('analytics_catalogue_df')
 
 # --- Sidebar Controls ---
 st.sidebar.header("Replenishment Parameters")
@@ -100,6 +102,18 @@ else:
                 replenishment_plan_df['Category'].fillna('Uncategorized', inplace=True)
             else:
                 replenishment_plan_df['Category'] = 'N/A'
+
+            if all_catalogue_df is not None and not all_catalogue_df.empty:
+                replenishment_plan_df = pd.merge(
+                    replenishment_plan_df,
+                    all_catalogue_df,
+                    on='MSKU',
+                    how='left'
+                )
+                # Fill missing image URLs with a placeholder or leave blank
+                replenishment_plan_df['Image URL'].fillna('', inplace=True)
+            else:
+                replenishment_plan_df['Image URL'] = ''
             
             st.session_state.replenishment_plan_df = replenishment_plan_df
 
@@ -129,7 +143,7 @@ if 'replenishment_plan_df' in st.session_state and st.session_state.replenishmen
             display_df = display_df[display_df['Status'] == selected_status]
 
         display_cols = [
-            'MSKU', 'Category', 'Status', 'Current Inventory', 'Avg Daily Sales', 'DOS', 
+            'Image URL','MSKU', 'Category', 'Status', 'Current Inventory', 'Avg Daily Sales', 'DOS', 
             'Reorder Point', 'Suggested Order Qty', 'Lead Time (days)', 
             'Stock Cover (days)', 'MOQ', 'Target Stock Level'
         ]
@@ -146,10 +160,14 @@ if 'replenishment_plan_df' in st.session_state and st.session_state.replenishmen
                 '📈 Overstocked': 3
             })), # Custom sort order
             column_config={
+
                 "MSKU": st.column_config.TextColumn("MSKU", width="medium", disabled=True),
-                # --- THIS IS THE FIX ---
+                "Image URL": st.column_config.ImageColumn(
+                    "Image", # Header of the column
+                    width="small", # Options: "small", "medium", "large"
+                    help="Product Image"
+                ),
                 "Category": st.column_config.TextColumn("Category", width="medium", disabled=True),
-                # --- END FIX ---
                 "Status": st.column_config.TextColumn("Status", width="small", disabled=True),
                 "Current Inventory": st.column_config.NumberColumn("Current Inv.", format="%d", disabled=True),
                 "Avg Daily Sales": st.column_config.NumberColumn("Avg Daily Sales", format="%.2f", disabled=True),

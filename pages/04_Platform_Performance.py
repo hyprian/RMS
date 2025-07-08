@@ -43,13 +43,14 @@ if not fetcher:
 processed_sales_table_id = APP_CONFIG['baserow'].get('processed_sales_data_table_id')
 inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
 category_table_id = APP_CONFIG['baserow'].get('category_table_id')
+catalogue_table_id = APP_CONFIG['baserow'].get('catalogue_table_id')
 
 if not processed_sales_table_id:
     st.error("`processed_sales_data_table_id` is not configured. Cannot display analytics.")
     st.stop()
 
 # Central data loading for performance
-load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id)
+load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id,catalogue_table_id)
 all_sales_df = st.session_state.get('analytics_sales_df')
 all_category_df = st.session_state.get('analytics_category_df')
 

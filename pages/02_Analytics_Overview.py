@@ -48,6 +48,7 @@ if not fetcher:
 processed_sales_table_id = APP_CONFIG['baserow'].get('processed_sales_data_table_id')
 inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
 category_table_id = APP_CONFIG['baserow'].get('category_table_id')
+catalogue_table_id = APP_CONFIG['baserow'].get('catalogue_table_id')
 
 if not processed_sales_table_id:
     st.error("`processed_sales_data_table_id` is not configured in settings.yaml. Cannot display analytics.")
@@ -64,7 +65,7 @@ if 'force_reload_analytics' not in st.session_state:
 if st.sidebar.button("Force Reload Data from Baserow"):
     st.session_state.force_reload_analytics = True
 
-load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id, force_reload=st.session_state.force_reload_analytics)
+load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id, catalogue_table_id,force_reload=st.session_state.force_reload_analytics)
 # Reset the flag after use
 st.session_state.force_reload_analytics = False
 
