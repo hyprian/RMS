@@ -10,7 +10,7 @@ if project_root not in sys.path: sys.path.insert(0, project_root)
 
 from utils.config_loader import APP_CONFIG
 from data_processing.baserow_fetcher import BaserowFetcher
-from po_module.po_management import get_all_pos, update_po_line_item
+from po_module.po_management import get_all_pos, update_po_line_item , upload_file_to_baserow
 
 import logging
 logger = logging.getLogger(__name__)
@@ -132,82 +132,129 @@ else:
             st.subheader(f"Details for PO: {po_number}")
             st.subheader("Line Items")
             line_items_to_edit = po_group_df.copy()
-            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'Actual Qty Received', 'Damage/Dust', 'Missing', 'Extra', 'INR Amt', 'Date Of Qc', 'GRN Status', 'Payment Status' , 'Actual Receiving Date']
-            line_items_to_edit = line_items_to_edit[[col for col in display_cols if col in line_items_to_edit.columns]]
+            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'Actual Qty Received', 'Damage/Dust', 'Missing', 'Extra', 'USD Amt', 'INR Amt', 'per pcs price usd', 'Date Of Qc', 'GRN Status', 'Payment Status' , 'Actual Receiving Date']
+            line_items_to_edit_subset  = line_items_to_edit[[col for col in display_cols if col in line_items_to_edit.columns]]
 
             edited_line_items_df = st.data_editor(
-                line_items_to_edit,
+                line_items_to_edit_subset,
                 column_config={
-                    "id": None, "Msku Code": st.column_config.TextColumn(disabled=True),
+                    "id": None, # Hide the Baserow row ID
+                    "Msku Code": st.column_config.TextColumn(disabled=True),
                     "Category": st.column_config.TextColumn(disabled=True),
-                    "Projection Code": st.column_config.TextColumn("Proj. Code", disabled=False), # Editable here
-                    "Quantity": st.column_config.NumberColumn("Qty Ordered", format="%d", disabled=True),
                     
-                    # GRN fields are now read-only on this page
-                    "Actual Qty Received": st.column_config.NumberColumn(format="%d", disabled=True),
+                    # --- MODIFICATION: Configure all columns for display/editing ---
+                    "Projection Code": st.column_config.TextColumn("Proj. Code"),
+                    "Status": st.column_config.SelectboxColumn("PO Status", options=["Draft", "Sent For Approval", "Final Invoice Received", "Dispatched", "In Transit", "On Hold", "Received", "Cancelled"], required=True),
+                    "Quantity": st.column_config.NumberColumn("Qty Ordered", format="%d", disabled=True),
+                    "Actual Qty Received": st.column_config.NumberColumn("Qty Rcvd", format="%d", disabled=True),
                     "Damage/Dust": st.column_config.NumberColumn(format="%d", disabled=True),
                     "Missing": st.column_config.NumberColumn(format="%d", disabled=True),
                     "Extra": st.column_config.NumberColumn(format="%d", disabled=True),
+                    "USD Amt": st.column_config.NumberColumn(format="$%.2f", disabled=True),
+                    "INR Amt": st.column_config.NumberColumn(format="₹%.2f"), # Allow editing INR amount
+                    "per pcs price usd": st.column_config.NumberColumn("Price/pcs USD", format="$%.4f", disabled=True),
                     "Date Of Qc": st.column_config.TextColumn("QC Date", disabled=True),
-                    
-                    # These fields remain editable on this page
-                    "Status": st.column_config.SelectboxColumn("PO Status", options=["Draft", "Sent For Approval", "Final Invoice Received", "Dispatched", "In Transit", "On Hold", "Received", "Cancelled"], required=True),
-                    "Actual Receiving Date": st.column_config.DateColumn("Actual Receiving Date", format="DD-MMM-YYYY"),
                     "GRN Status": st.column_config.SelectboxColumn("GRN Status", options=["Pending", "In-Process", "GRN Completed", "On Hold"]),
                     "Payment Status": st.column_config.SelectboxColumn("Payment Status", options=["Unpaid", "Partially Paid", "Paid", "On Hold"]),
-                    "INR Amt": st.column_config.NumberColumn("INR Amt", format="₹%.2f")
+                    "Actual Receiving Date": st.column_config.DateColumn("Actual Receiving Date", format="DD-MMM-YYYY"),
                 },
                 hide_index=True, use_container_width=True, key=f"editor_{po_number}"
-            )
-            
+            )            
 
+            # --- ROBUST CHANGE DETECTION LOGIC ---
+            # Set index to 'id' for easy row-by-row comparison
             original_subset = line_items_to_edit.set_index('id')
             edited_subset = edited_line_items_df.set_index('id')
-            changed_rows = original_subset.ne(edited_subset).any(axis=1)
-            if changed_rows.any():
+            
+            # Find which rows have changed by comparing the two DataFrames
+            # The ne() method compares element-wise and returns a boolean DataFrame
+            # .any(axis=1) checks if any value in a row is True (meaning any cell changed)
+            changed_mask = original_subset.ne(edited_subset).any(axis=1)
+            
+            if changed_mask.any():
                 if st.button(f"Save Changes for PO {po_number}", key=f"save_{po_number}"):
+                    # Get the IDs of the rows that actually changed
+                    changed_ids = changed_mask[changed_mask].index.tolist()
+                    
                     with st.spinner(f"Saving updates for PO {po_number}..."):
-                        num_changed = changed_rows.sum(); success_updates = 0
-                        for row_id, has_changed in changed_rows.items():
-                            if has_changed:
-                                update_data = edited_subset.loc[row_id].to_dict()
-                                if 'Actual Receiving Date' in update_data and pd.notna(update_data['Actual Receiving Date']):
-                                    # This field is a datetime object from st.data_editor
-                                    update_data['Actual Receiving Date'] = update_data['Actual Receiving Date'].strftime('%d-%b-%Y')
-                                else:
-                                    update_data['Actual Receiving Date'] = None # Handle clearing the date
+                        success_updates = 0
+                        for row_id in changed_ids:
+                            # Get the full row of new data from the edited DataFrame
+                            update_data = edited_subset.loc[row_id].to_dict()
+                            
+                            # Format date correctly for Baserow
+                            if 'Actual Receiving Date' in update_data and pd.notna(update_data['Actual Receiving Date']):
+                                update_data['Actual Receiving Date'] = update_data['Actual Receiving Date'].strftime('%d-%b-%Y')
+                            else:
+                                update_data['Actual Receiving Date'] = None
 
-                                final_payload = {
-                                    "Status": update_data.get("Status"),
-                                    "Actual Receiving Date": update_data.get("Actual Receiving Date"),
-                                    "GRN Status": update_data.get("GRN Status"),
-                                    "Payment Status": update_data.get("Payment Status"),
-                                    "Projection Code": update_data.get("Projection Code"),
-                                    # Convert numbers to strings for our simple schema
-                                    "INR Amt": str(update_data.get("INR Amt", 0))
-                                }
-                                print(final_payload)
-                                if update_po_line_item(fetcher, po_table_id, row_id, final_payload):
-                                    success_updates += 1
-                                else: st.error(f"Failed to update line item for MSKU: {update_data['Msku Code']} (Row ID: {row_id})")
-                        if success_updates == num_changed:
+                            # Prepare final payload with only the fields that are actually editable on this page
+                            final_payload = {
+                                "Status": update_data.get("Status"),
+                                "Actual Receiving Date": update_data.get("Actual Receiving Date"),
+                                "GRN Status": update_data.get("GRN Status"),
+                                "Payment Status": update_data.get("Payment Status"),
+                                "Projection Code": update_data.get("Projection Code"),
+                                "INR Amt": str(update_data.get("INR Amt", 0)) # Convert numbers to strings
+                            }
+                            
+                            if update_po_line_item(fetcher, po_table_id, row_id, final_payload):
+                                success_updates += 1
+                            else:
+                                st.error(f"Failed to update line item with ID: {row_id}")
+
+                        if success_updates == len(changed_ids):
                             st.success("All changes saved successfully!")
                             st.session_state.manage_po_all_pos_df = load_po_data()
                             st.rerun()
-                        else: st.warning("Some changes could not be saved. Please check logs.")
+                        else:
+                            st.warning("Some changes could not be saved. Please check logs.")
+            # --- END ROBUST CHANGE DETECTION ---
 
-            st.markdown("---"); st.subheader("Attachments")
-            invoice_files = header_info.get('Final Invoice'); packing_list_files = header_info.get('Packing List')
+            # ... (Attachments Management section remains the same) ...
+            st.markdown("---"); st.subheader("Attachments Management")
             file_col1, file_col2 = st.columns(2)
             with file_col1:
                 st.markdown("**Final Invoice(s)**")
+                invoice_files = header_info.get('Final Invoice')
                 if isinstance(invoice_files, list) and invoice_files:
-                    for file_info in invoice_files: st.link_button(f"View/Download: {file_info['name']}", url=file_info['url'])
+                    for file_info in invoice_files: st.link_button(f"View: {file_info['name']}", url=file_info['url'], use_container_width=True)
                 else: st.text("No invoice uploaded.")
+                new_invoice_files = st.file_uploader("Upload/Replace Invoice(s)", type="pdf", accept_multiple_files=True, key=f"invoice_upload_{po_number}")
             with file_col2:
                 st.markdown("**Packing List(s)**")
+                packing_list_files = header_info.get('Packing List')
                 if isinstance(packing_list_files, list) and packing_list_files:
-                    for file_info in packing_list_files:
-                        if file_info.get('is_image', False): st.image(file_info['url'], caption=file_info['name'], width=200)
-                        else: st.link_button(f"View/Download: {file_info['name']}", url=file_info['url'])
+                    num_images = len(packing_list_files); max_cols = 3
+                    img_cols = st.columns(max_cols)
+                    for i, file_info in enumerate(packing_list_files):
+                        with img_cols[i % max_cols]:
+                            if file_info.get('is_image', False): st.image(file_info['url'], caption=file_info.get('name'), use_container_width=True)
+                            else: st.link_button(f"View: {file_info['name']}", url=file_info['url'])
                 else: st.text("No packing list uploaded.")
+                new_packing_list_files = st.file_uploader("Upload/Replace Packing List(s)", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True, key=f"packing_list_upload_{po_number}")
+            if st.button("Update Attachments", key=f"update_files_{po_number}", disabled=(not new_invoice_files and not new_packing_list_files)):
+                with st.spinner("Uploading new files and updating PO..."):
+                    update_payload = {}
+                    if new_invoice_files:
+                        existing_invoices = header_info.get('Final Invoice', []);
+                        if not isinstance(existing_invoices, list): existing_invoices = []
+                        for file in new_invoice_files:
+                            file_data = upload_file_to_baserow(fetcher, file.getvalue(), file.name)
+                            if file_data: existing_invoices.append(file_data)
+                        if existing_invoices: update_payload["Final Invoice"] = existing_invoices
+                    if new_packing_list_files:
+                        existing_packing_lists = header_info.get('Packing List', []);
+                        if not isinstance(existing_packing_lists, list): existing_packing_lists = []
+                        for file in new_packing_list_files:
+                            file_data = upload_file_to_baserow(fetcher, file.getvalue(), file.name)
+                            if file_data: existing_packing_lists.append(file_data)
+                        if existing_packing_lists: update_payload["Packing List"] = existing_packing_lists
+                    if update_payload:
+                        update_success_count = 0
+                        for row_id in po_group_df['id']:
+                            if update_po_line_item(fetcher, po_table_id, row_id, update_payload):
+                                update_success_count += 1
+                        if update_success_count == len(po_group_df):
+                            st.success("Attachments updated successfully!"); st.session_state.manage_po_all_pos_df = load_po_data(); st.rerun()
+                        else: st.error("Failed to update attachments on some line items.")
