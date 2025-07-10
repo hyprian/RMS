@@ -130,8 +130,9 @@ else:
         expander_label = f"**{po_number}** | Vendor: **{header_info['Vendor Name']}** | Proj. Code: **{projection_code_str}** | Status: **{header_info['Status']}** | Date: {order_date_str} | Qty: {total_qty:,.0f}"        
         with st.expander(expander_label):
             st.subheader(f"Details for PO: {po_number}")
+            st.subheader("Line Items")
             line_items_to_edit = po_group_df.copy()
-            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'INR Amt', 'Actual Receiving Date', 'GRN Status', 'Payment Status']
+            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'Actual Qty Received', 'Damage/Dust', 'Missing', 'Extra', 'INR Amt', 'Date Of Qc', 'GRN Status', 'Payment Status' , 'Actual Receiving Date']
             line_items_to_edit = line_items_to_edit[[col for col in display_cols if col in line_items_to_edit.columns]]
 
             edited_line_items_df = st.data_editor(
@@ -139,16 +140,26 @@ else:
                 column_config={
                     "id": None, "Msku Code": st.column_config.TextColumn(disabled=True),
                     "Category": st.column_config.TextColumn(disabled=True),
-                    "Projection Code": st.column_config.TextColumn("Proj. Code", help="The projection code for this PO line item."),
-                    "Status": st.column_config.SelectboxColumn("Status", options=["Draft", "Sent For Approval", "Final Invoice Received", "Dispatched", "In Transit", "On Hold", "Received"], required=True),
+                    "Projection Code": st.column_config.TextColumn("Proj. Code", disabled=False), # Editable here
+                    "Quantity": st.column_config.NumberColumn("Qty Ordered", format="%d", disabled=True),
+                    
+                    # GRN fields are now read-only on this page
+                    "Actual Qty Received": st.column_config.NumberColumn(format="%d", disabled=True),
+                    "Damage/Dust": st.column_config.NumberColumn(format="%d", disabled=True),
+                    "Missing": st.column_config.NumberColumn(format="%d", disabled=True),
+                    "Extra": st.column_config.NumberColumn(format="%d", disabled=True),
+                    "Date Of Qc": st.column_config.TextColumn("QC Date", disabled=True),
+                    
+                    # These fields remain editable on this page
+                    "Status": st.column_config.SelectboxColumn("PO Status", options=["Draft", "Sent For Approval", "Final Invoice Received", "Dispatched", "In Transit", "On Hold", "Received", "Cancelled"], required=True),
                     "Actual Receiving Date": st.column_config.DateColumn("Actual Receiving Date", format="DD-MMM-YYYY"),
                     "GRN Status": st.column_config.SelectboxColumn("GRN Status", options=["Pending", "In-Process", "GRN Completed", "On Hold"]),
                     "Payment Status": st.column_config.SelectboxColumn("Payment Status", options=["Unpaid", "Partially Paid", "Paid", "On Hold"]),
-                    "Quantity": st.column_config.NumberColumn(format="%d"),
                     "INR Amt": st.column_config.NumberColumn("INR Amt", format="₹%.2f")
                 },
                 hide_index=True, use_container_width=True, key=f"editor_{po_number}"
             )
+            
 
             original_subset = line_items_to_edit.set_index('id')
             edited_subset = edited_line_items_df.set_index('id')
@@ -161,18 +172,19 @@ else:
                             if has_changed:
                                 update_data = edited_subset.loc[row_id].to_dict()
                                 if 'Actual Receiving Date' in update_data and pd.notna(update_data['Actual Receiving Date']):
+                                    # This field is a datetime object from st.data_editor
                                     update_data['Actual Receiving Date'] = update_data['Actual Receiving Date'].strftime('%d-%b-%Y')
-                                for key, value in update_data.items():
-                                    if isinstance(value, (int, float)): update_data[key] = str(value)
+                                else:
+                                    update_data['Actual Receiving Date'] = None # Handle clearing the date
 
                                 final_payload = {
                                     "Status": update_data.get("Status"),
                                     "Actual Receiving Date": update_data.get("Actual Receiving Date"),
                                     "GRN Status": update_data.get("GRN Status"),
                                     "Payment Status": update_data.get("Payment Status"),
-                                    "Quantity": update_data.get("Quantity"),
-                                    "INR Amt": update_data.get("INR Amt"),
-                                    "Projection Code": update_data.get("Projection Code") # Add the key here
+                                    "Projection Code": update_data.get("Projection Code"),
+                                    # Convert numbers to strings for our simple schema
+                                    "INR Amt": str(update_data.get("INR Amt", 0))
                                 }
                                 print(final_payload)
                                 if update_po_line_item(fetcher, po_table_id, row_id, final_payload):

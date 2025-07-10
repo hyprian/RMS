@@ -41,13 +41,13 @@ def get_all_pos(fetcher, po_table_id: int) -> pd.DataFrame:
 
 def get_po_details(po_df: pd.DataFrame, po_number: str) -> pd.DataFrame:
     """Filters the main PO DataFrame to get all line items for a specific PO number."""
-    if po_df is None or po_df.empty or 'Po No' not in po_df.columns:
+    if po_df is None or po_df.empty or 'Po No.' not in po_df.columns:
         return pd.DataFrame()
-    return po_df[po_df['Po No'] == po_number].copy()
+    return po_df[po_df['Po No.'] == po_number].copy()
 
 def create_po_line_item(fetcher, po_table_id: int, data_dict: dict) -> bool:
     """Creates a new row (a single line item) in the PO table."""
-    logger.info(f"PO_MGMT: Creating new PO line item in table {po_table_id} for PO: {data_dict.get('Po No')}")
+    logger.info(f"PO_MGMT: Creating new PO line item in table {po_table_id} for PO: {data_dict.get('Po No.')}")
     # This function already saves dates in the standard 'YYYY-MM-DD' format, which is good.
     # The warning only appears when reading inconsistent, manually entered data.
     return fetcher.batch_create_rows(po_table_id, [data_dict])
