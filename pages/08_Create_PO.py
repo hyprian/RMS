@@ -56,7 +56,9 @@ if 'po_header_initialized' not in st.session_state:
     st.session_state.po_header_forwarder_text = ""
     st.session_state.po_header_shipment_route = "Air"
     st.session_state.po_header_projection_code = "00-00-001"
+    st.session_state.po_header_carrying_amount = 0.0
     st.session_state.po_header_initialized = True
+
 if 'line_item_msku' not in st.session_state:
     st.session_state.line_item_msku = ""
 if 'line_item_qty' not in st.session_state:
@@ -121,7 +123,12 @@ with st.container(border=True):
         forwarder_select = st.selectbox("Forwarder", options=forwarder_options, key="po_header_forwarder_select")
         forwarder_text = st.text_input("Or, Enter New Forwarder:", key="po_header_forwarder_text")
         st.selectbox("Shipment Route", options=["Air", "Sea"], key="po_header_shipment_route")
-    st.text_input("Projection Code", key="po_header_projection_code", help="Enter the code in XX-XX-001 format.")
+    col4, col5 = st.columns([1, 2])
+    with col4:
+        # --- NEW: Add Carrying Amount input field ---
+        st.number_input("Carrying Amount (INR)", key="po_header_carrying_amount", min_value=0.0, format="%.2f", help="Total extra cost paid to the carrier for this PO.")
+    with col5:
+        st.text_input("Projection Code", key="po_header_projection_code", help="Enter the code in XX-XX-001 format.")
 
 st.divider()
 st.header("2. Add Line Items")
@@ -198,6 +205,7 @@ if st.button("Create Purchase Order in Baserow", type="primary", disabled=not st
     final_forwarder = st.session_state.po_header_forwarder_text if st.session_state.po_header_forwarder_select == "" else st.session_state.po_header_forwarder_select
     final_shipment_route = st.session_state.po_header_shipment_route
     final_projection_code = st.session_state.po_header_projection_code
+    final_carrying_amount = st.session_state.po_header_carrying_amount
 
     if not final_po_number or not final_vendor_name:
         st.error("PO Number and Vendor Name are required in the Header section.")
@@ -225,6 +233,7 @@ if st.button("Create Purchase Order in Baserow", type="primary", disabled=not st
                     "Forwarder": final_forwarder,
                     "Shipment Route": final_shipment_route,
                     "Projection Code": final_projection_code,
+                    "Carrying Amount": str(final_carrying_amount),
                     "Msku Code": item['MSKU'],
                     "Category": item['Category'],
                     "Quantity": str(item['Quantity']),

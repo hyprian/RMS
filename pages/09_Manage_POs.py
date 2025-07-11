@@ -4,6 +4,7 @@ import pandas as pd
 import os
 import sys
 from datetime import date, timedelta, datetime
+import numpy as np
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
 if project_root not in sys.path: sys.path.insert(0, project_root)
@@ -132,7 +133,22 @@ else:
             st.subheader(f"Details for PO: {po_number}")
             st.subheader("Line Items")
             line_items_to_edit = po_group_df.copy()
-            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'Actual Qty Received', 'Damage/Dust', 'Missing', 'Extra', 'USD Amt', 'INR Amt', 'per pcs price usd', 'Date Of Qc', 'GRN Status', 'Payment Status' , 'Actual Receiving Date']
+
+            # --- NEW: Calculate Final Cost ---
+            # Convert columns to numeric for calculation, handling errors
+            line_items_to_edit['INR Amt'] = pd.to_numeric(line_items_to_edit['INR Amt'], errors='coerce').fillna(0)
+            line_items_to_edit['Carrying Amount'] = pd.to_numeric(line_items_to_edit['Carrying Amount'], errors='coerce').fillna(0)
+            line_items_to_edit['Quantity'] = pd.to_numeric(line_items_to_edit['Quantity'], errors='coerce').fillna(0)
+            
+            # The formula: (INR Amt + Carrying Amount) / Quantity
+            # Use np.where to avoid division by zero
+            line_items_to_edit['Final Cost'] = np.where(
+                line_items_to_edit['Quantity'] > 0,
+                (line_items_to_edit['INR Amt'] + line_items_to_edit['Carrying Amount']) / line_items_to_edit['Quantity'],
+                0 # Set to 0 if quantity is 0
+            )
+
+            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'Actual Qty Received', 'Damage/Dust', 'Missing', 'Extra', 'USD Amt', 'INR Amt', 'Carrying Amount', 'Final Cost', 'per pcs price usd', 'Date Of Qc', 'GRN Status', 'Payment Status' , 'Actual Receiving Date']
             line_items_to_edit_subset  = line_items_to_edit[[col for col in display_cols if col in line_items_to_edit.columns]]
 
             edited_line_items_df = st.data_editor(
@@ -146,6 +162,8 @@ else:
                     "Projection Code": st.column_config.TextColumn("Proj. Code"),
                     "Status": st.column_config.SelectboxColumn("PO Status", options=["Draft", "Sent For Approval", "Final Invoice Received", "Dispatched", "In Transit", "On Hold", "Received", "Cancelled"], required=True),
                     "Quantity": st.column_config.NumberColumn("Qty Ordered", format="%d", disabled=True),
+                    "Carrying Amount": st.column_config.NumberColumn("Carrying Amt (INR)", format="₹%.2f", help="Edit the carrying amount for all items in this PO."),
+                    "Final Cost": st.column_config.NumberColumn("Final Cost/pcs (INR)", format="₹%.2f", disabled=True, help="(INR Amt + Carrying Amt) / Quantity"),
                     "Actual Qty Received": st.column_config.NumberColumn("Qty Rcvd", format="%d", disabled=True),
                     "Damage/Dust": st.column_config.NumberColumn(format="%d", disabled=True),
                     "Missing": st.column_config.NumberColumn(format="%d", disabled=True),
@@ -195,7 +213,8 @@ else:
                                 "GRN Status": update_data.get("GRN Status"),
                                 "Payment Status": update_data.get("Payment Status"),
                                 "Projection Code": update_data.get("Projection Code"),
-                                "INR Amt": str(update_data.get("INR Amt", 0)) # Convert numbers to strings
+                                "INR Amt": str(update_data.get("INR Amt", 0)), # Convert numbers to strings
+                                "Carrying Amount": str(update_data.get("Carrying Amount", 0))
                             }
                             
                             if update_po_line_item(fetcher, po_table_id, row_id, final_payload):

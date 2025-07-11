@@ -46,7 +46,7 @@ def load_and_cache_analytics_data(fetcher, sales_table_id, inventory_table_id, c
             else:
                 st.session_state.analytics_category_df = pd.DataFrame()
 
-    if 'analytics_catalogue_df' not in st.session_state or force_reload:
+    if catalogue_table_id and ('analytics_catalogue_df' not in st.session_state or force_reload):
         logger.info("DATA_LOADER: No catalogue data in session state or force_reload=True. Fetching from Baserow...")
         if catalogue_table_id:
             with st.spinner("Loading product catalogue (images)..."):
