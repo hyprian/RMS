@@ -134,21 +134,26 @@ else:
             st.subheader("Line Items")
             line_items_to_edit = po_group_df.copy()
 
-            # --- NEW: Calculate Final Cost ---
-            # Convert columns to numeric for calculation, handling errors
-            line_items_to_edit['INR Amt'] = pd.to_numeric(line_items_to_edit['INR Amt'], errors='coerce').fillna(0)
-            line_items_to_edit['Carrying Amount'] = pd.to_numeric(line_items_to_edit['Carrying Amount'], errors='coerce').fillna(0)
-            line_items_to_edit['Quantity'] = pd.to_numeric(line_items_to_edit['Quantity'], errors='coerce').fillna(0)
+            cost_cols = ['INR Amt', 'Carrying Amount', 'Porter Charges', 'Packaging and Other Charges', 'Quantity']
+            for col in cost_cols:
+                line_items_to_edit[col] = pd.to_numeric(line_items_to_edit[col], errors='coerce').fillna(0)
             
-            # The formula: (INR Amt + Carrying Amount) / Quantity
-            # Use np.where to avoid division by zero
+            # Formula 1: Final Cost (including porter and carrying)
             line_items_to_edit['Final Cost'] = np.where(
                 line_items_to_edit['Quantity'] > 0,
-                (line_items_to_edit['INR Amt'] + line_items_to_edit['Carrying Amount']) / line_items_to_edit['Quantity'],
-                0 # Set to 0 if quantity is 0
+                (line_items_to_edit['INR Amt'] + line_items_to_edit['Carrying Amount'] + line_items_to_edit['Porter Charges']) / line_items_to_edit['Quantity'],
+                0
             )
+            
+            # Formula 2: Final Cost With Packaging
+            line_items_to_edit['Final Cost With Packaging'] = np.where(
+                line_items_to_edit['Quantity'] > 0,
+                line_items_to_edit['Final Cost'] + (line_items_to_edit['Packaging and Other Charges'] / line_items_to_edit['Quantity']),
+                line_items_to_edit['Final Cost'] # If no quantity, it's the same as Final Cost (which would be 0)
+            )
+            # --- END CALCULATION ---
 
-            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'Actual Qty Received', 'Damage/Dust', 'Missing', 'Extra', 'USD Amt', 'INR Amt', 'Carrying Amount', 'Final Cost', 'per pcs price usd', 'Date Of Qc', 'GRN Status', 'Payment Status' , 'Actual Receiving Date']
+            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'Actual Qty Received', 'Damage/Dust', 'Missing', 'Extra', 'USD Amt', 'INR Amt', 'Carrying Amount', 'Porter Charges', 'Packaging and Other Charges', 'Final Cost', 'per pcs price usd', 'Date Of Qc', 'GRN Status', 'Payment Status' , 'Actual Receiving Date']
             line_items_to_edit_subset  = line_items_to_edit[[col for col in display_cols if col in line_items_to_edit.columns]]
 
             edited_line_items_df = st.data_editor(
@@ -162,9 +167,13 @@ else:
                     "Projection Code": st.column_config.TextColumn("Proj. Code"),
                     "Status": st.column_config.SelectboxColumn("PO Status", options=["Draft", "Sent For Approval", "Final Invoice Received", "Dispatched", "In Transit", "On Hold", "Received", "Cancelled"], required=True),
                     "Quantity": st.column_config.NumberColumn("Qty Ordered", format="%d", disabled=True),
-                    "Carrying Amount": st.column_config.NumberColumn("Carrying Amt (INR)", format="₹%.2f", help="Edit the carrying amount for all items in this PO."),
-                    "Final Cost": st.column_config.NumberColumn("Final Cost/pcs (INR)", format="₹%.2f", disabled=True, help="(INR Amt + Carrying Amt) / Quantity"),
-                    "Actual Qty Received": st.column_config.NumberColumn("Qty Rcvd", format="%d", disabled=True),
+                    # --- NEW & MODIFIED: Configure new columns ---
+                    "Carrying Amount": st.column_config.NumberColumn("Carrying Amt (INR)", format="₹%.2f"),
+                    "Porter Charges": st.column_config.NumberColumn("Porter Charges (INR)", format="₹%.2f"),
+                    "Packaging and Other Charges": st.column_config.NumberColumn("Packaging/Other (INR)", format="₹%.2f"),
+                    "Final Cost": st.column_config.NumberColumn("Final Cost/pcs (INR)", format="₹%.2f", disabled=True, help="(INR Amt + Carrying + Porter) / Qty"),
+                    "Final Cost With Packaging": st.column_config.NumberColumn("Landed Cost/pcs (INR)", format="₹%.2f", disabled=True, help="Final Cost + Packaging Cost per piece"),
+                    # --- END NEW ---                    "Actual Qty Received": st.column_config.NumberColumn("Qty Rcvd", format="%d", disabled=True),
                     "Damage/Dust": st.column_config.NumberColumn(format="%d", disabled=True),
                     "Missing": st.column_config.NumberColumn(format="%d", disabled=True),
                     "Extra": st.column_config.NumberColumn(format="%d", disabled=True),
@@ -214,7 +223,10 @@ else:
                                 "Payment Status": update_data.get("Payment Status"),
                                 "Projection Code": update_data.get("Projection Code"),
                                 "INR Amt": str(update_data.get("INR Amt", 0)), # Convert numbers to strings
-                                "Carrying Amount": str(update_data.get("Carrying Amount", 0))
+                                "Carrying Amount": str(update_data.get("Carrying Amount", 0)),
+                                "Porter Charges": str(update_data.get("Porter Charges", 0)),
+                                "Packaging and Other Charges": str(update_data.get("Packaging and Other Charges", 0))
+    
                             }
                             
                             if update_po_line_item(fetcher, po_table_id, row_id, final_payload):
