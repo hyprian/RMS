@@ -1,7 +1,7 @@
 baserow:
   base_url: https://api.baserow.io
   api_token: w5YLuEJF6pTm2HfrmlFBQpJYRhMiurdG
-  sku_mapping_table_id: 598590
+  sku_mapping_table_id: 602281
   combo_sku_table_id: 598588
   inventory_table_id: 599869
   processed_sales_data_table_id: 598432
