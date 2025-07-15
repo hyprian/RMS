@@ -194,13 +194,22 @@ else:
 
 st.divider()
 st.header("4. Attachments & Final Submission")
-# ... (Attachments section remains the same) ...
+allowed_invoice_types = ["pdf","jpg", "jpeg", "csv", "xlsx", "xls"]
+allowed_packing_list_types = ["png", "jpg", "jpeg", "pdf", "csv", "xlsx", "xls"]
+
 col_attach1, col_attach2 = st.columns(2)
 with col_attach1:
-    invoice_file = st.file_uploader("Upload Final Invoice (PDF)", type="pdf")
+    invoice_file = st.file_uploader(
+        "Upload Final Invoice", 
+        type=allowed_invoice_types, 
+        accept_multiple_files=False # Assuming one final invoice, change to True if needed
+    )
 with col_attach2:
-    packing_list_file = st.file_uploader("Upload Packing List (Image)", type=['png', 'jpg', 'jpeg'])
-
+    packing_list_file = st.file_uploader(
+        "Upload Packing List", 
+        type=allowed_packing_list_types, 
+        accept_multiple_files=True # Keep this as True to allow multiple images/docs
+    )
 # --- Submission Logic ---
 if st.button("Create Purchase Order in Baserow", type="primary", disabled=not st.session_state.po_draft_items):
     # ... (Reading final header values remains the same) ...

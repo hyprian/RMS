@@ -244,6 +244,10 @@ else:
 
             # ... (Attachments Management section remains the same) ...
             st.markdown("---"); st.subheader("Attachments Management")
+
+            allowed_invoice_types = ["pdf", "csv","jpg", "jpeg", "xlsx", "xls"]
+            allowed_packing_list_types = ["png", "jpg", "jpeg", "pdf", "csv", "xlsx", "xls"]
+
             file_col1, file_col2 = st.columns(2)
             with file_col1:
                 st.markdown("**Final Invoice(s)**")
@@ -251,8 +255,9 @@ else:
                 if isinstance(invoice_files, list) and invoice_files:
                     for file_info in invoice_files: st.link_button(f"View: {file_info['name']}", url=file_info['url'], use_container_width=True)
                 else: st.text("No invoice uploaded.")
-                new_invoice_files = st.file_uploader("Upload/Replace Invoice(s)", type="pdf", accept_multiple_files=True, key=f"invoice_upload_{po_number}")
-            with file_col2:
+                new_invoice_files = st.file_uploader("Upload/Replace Invoice(s)", type=allowed_invoice_types, accept_multiple_files=True, key=f"invoice_upload_{po_number}")
+
+            with file_col2: 
                 st.markdown("**Packing List(s)**")
                 packing_list_files = header_info.get('Packing List')
                 if isinstance(packing_list_files, list) and packing_list_files:
@@ -263,7 +268,7 @@ else:
                             if file_info.get('is_image', False): st.image(file_info['url'], caption=file_info.get('name'), use_container_width=True)
                             else: st.link_button(f"View: {file_info['name']}", url=file_info['url'])
                 else: st.text("No packing list uploaded.")
-                new_packing_list_files = st.file_uploader("Upload/Replace Packing List(s)", type=['png', 'jpg', 'jpeg', 'pdf'], accept_multiple_files=True, key=f"packing_list_upload_{po_number}")
+                new_packing_list_files = st.file_uploader("Upload/Replace Packing List(s)", type=allowed_packing_list_types, accept_multiple_files=True, key=f"packing_list_upload_{po_number}")
             if st.button("Update Attachments", key=f"update_files_{po_number}", disabled=(not new_invoice_files and not new_packing_list_files)):
                 with st.spinner("Uploading new files and updating PO..."):
                     update_payload = {}
