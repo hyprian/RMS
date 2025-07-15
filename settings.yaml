@@ -58,6 +58,33 @@ platforms:
     slug: ms_acc_rudra
     sku_column: SKU
     quantity_column: Quantity
+- name: "Shopify"
+  slug: "shopify"
+  accounts:
+    - name: "Fusked (Shopify)"
+      slug: "shopify_fusked"
+      sku_column: "Lineitem sku"
+      quantity_column: "Lineitem quantity"
+      report_settings:
+        date_column: "Created at"
+        revenue_column: "Total"
+    - name: "CSTE (Shopify)"
+      slug: "shopify_cste"
+      sku_column: "Lineitem sku"
+      quantity_column: "Lineitem quantity"
+      report_settings:
+        date_column: "Created at"
+        revenue_column: "Total"
+- name: "FirstCry"
+  slug: "firstcry"
+  accounts:
+    - name: "Main Account (FirstCry)"
+      slug: "firstcry_main"
+      sku_column: "VendorStyleCode"
+      quantity_column: "Quantity"
+      report_settings:
+        date_column: "OrderDate"
+        revenue_column: "MRP Sales"
 default_sales_report_columns:
   sku_column: SKU
   quantity_column: Quantity

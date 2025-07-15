@@ -15,6 +15,9 @@ from data_processing.sku_mapper import SKUMapper
 from data_ingestion.amazon_parser import AmazonSalesParser
 from data_ingestion.flipkart_parser import FlipkartSalesParser
 from data_ingestion.meesho_parser import MeeshoSalesParser
+from data_ingestion.shopify_parser import ShopifySalesParser
+from data_ingestion.firstcry_parser import FirstCrySalesParser # NEW IMPORT
+
 
 import logging
 logger = logging.getLogger(__name__)
@@ -99,8 +102,13 @@ else:
     st.warning("Configure `processed_sales_data_table_id` in settings.yaml to see existing data ranges.")
 
 allowed_types_upload = ["csv"]
-if selected_platform_conf and selected_platform_conf['slug'].lower() == "flipkart":
-    allowed_types_upload = ["xlsx"]
+if selected_platform_conf:
+    platform_slug = selected_platform_conf['slug'].lower()
+    if platform_slug == "flipkart":
+        allowed_types_upload = ["xlsx"]
+    # --- NEW LOGIC ---
+    elif platform_slug == "firstcry":
+        allowed_types_upload = ["xlsx"]
 uploaded_file = st.file_uploader(f"Upload {selected_platform_name} Sales Report", type=allowed_types_upload, key="ingest_file_uploader")
 
 # "Process File" Button (Step 1)
@@ -116,7 +124,12 @@ if st.button("Process File (Preview Data)", key="ingest_process_file_button", di
     if platform_slug_lower == "amazon": parser = AmazonSalesParser(selected_platform_name, account_conf, sku_mapper)
     elif platform_slug_lower == "flipkart": parser = FlipkartSalesParser(selected_platform_name, account_conf, sku_mapper)
     elif platform_slug_lower == "meesho": parser = MeeshoSalesParser(selected_platform_name, account_conf, sku_mapper)
+    elif platform_slug_lower == "shopify":
+        parser = ShopifySalesParser(selected_platform_name, account_conf, sku_mapper)
+    elif platform_slug_lower == "firstcry":
+        parser = FirstCrySalesParser(selected_platform_name, account_conf, sku_mapper)
     else: st.error(f"No parser available for platform: {selected_platform_name}"); st.stop()
+
 
     with st.spinner(f"Processing {selected_platform_name} - {selected_account_name} data..."):
         temp_dir = os.path.join(project_root, ".tmp_uploads"); os.makedirs(temp_dir, exist_ok=True)
