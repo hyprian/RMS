@@ -23,7 +23,7 @@ baserow:
   - PNQ3
 cache:
   directory: .rms_cache
-  expiry_days: 5
+  expiry_days: 7
 logging:
   level: INFO
   format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
