@@ -3,7 +3,7 @@ baserow:
   api_token: w5YLuEJF6pTm2HfrmlFBQpJYRhMiurdG
   sku_mapping_table_id: 602281
   combo_sku_table_id: 598588
-  inventory_table_id: 599869
+  inventory_table_id: 609664
   processed_sales_data_table_id: 598432
   category_table_id: 598433
   purchase_orders_table_id: 598617
