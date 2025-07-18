@@ -8,6 +8,7 @@ baserow:
   category_table_id: 598433
   purchase_orders_table_id: 598617
   catalogue_table_id: 600174
+  po_intake_log_table_id: 612237
   inventory_warehouse_columns:
   - TLCQ
   - PNQ2

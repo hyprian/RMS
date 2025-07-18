@@ -145,15 +145,15 @@ else:
                 0
             )
             
-            # Formula 2: Final Cost With Packaging
-            line_items_to_edit['Final Cost With Packaging'] = np.where(
+            # --- FIX: Ensure 'Packaging and Other Charges' is used in the calculation ---
+            packaging_per_piece = np.where(
                 line_items_to_edit['Quantity'] > 0,
-                line_items_to_edit['Final Cost'] + (line_items_to_edit['Packaging and Other Charges'] / line_items_to_edit['Quantity']),
-                line_items_to_edit['Final Cost'] # If no quantity, it's the same as Final Cost (which would be 0)
+                line_items_to_edit['Packaging and Other Charges'] / line_items_to_edit['Quantity'],
+                0
             )
-            # --- END CALCULATION ---
+            line_items_to_edit['Final Cost With Packaging'] = line_items_to_edit['Final Cost'] + packaging_per_piece
 
-            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'Actual Qty Received', 'Damage/Dust', 'Missing', 'Extra', 'USD Amt', 'INR Amt', 'Carrying Amount', 'Porter Charges', 'Packaging and Other Charges', 'Final Cost', 'per pcs price usd', 'Date Of Qc', 'GRN Status', 'Payment Status' , 'Actual Receiving Date']
+            display_cols = ['id', 'Msku Code', 'Category','Projection Code','Status', 'Quantity', 'Actual Qty Received', 'Damage/Dust', 'Missing', 'Extra', 'USD Amt', 'INR Amt', 'Carrying Amount', 'Porter Charges',  'Final Cost', 'per pcs price usd', 'Packaging and Other Charges', 'Final Cost With Packaging' , 'Date Of Qc', 'GRN Status', 'Payment Status' , 'Actual Receiving Date']
             line_items_to_edit_subset  = line_items_to_edit[[col for col in display_cols if col in line_items_to_edit.columns]]
 
             edited_line_items_df = st.data_editor(
@@ -173,7 +173,7 @@ else:
                     "Packaging and Other Charges": st.column_config.NumberColumn("Packaging/Other (INR)", format="₹%.2f"),
                     "Final Cost": st.column_config.NumberColumn("Final Cost/pcs (INR)", format="₹%.2f", disabled=True, help="(INR Amt + Carrying + Porter) / Qty"),
                     "Final Cost With Packaging": st.column_config.NumberColumn("Landed Cost/pcs (INR)", format="₹%.2f", disabled=True, help="Final Cost + Packaging Cost per piece"),
-                    # --- END NEW ---                    "Actual Qty Received": st.column_config.NumberColumn("Qty Rcvd", format="%d", disabled=True),
+                   "Actual Qty Received": st.column_config.NumberColumn("Qty Rcvd", format="%d", disabled=True),
                     "Damage/Dust": st.column_config.NumberColumn(format="%d", disabled=True),
                     "Missing": st.column_config.NumberColumn(format="%d", disabled=True),
                     "Extra": st.column_config.NumberColumn(format="%d", disabled=True),
