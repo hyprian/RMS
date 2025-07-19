@@ -3,12 +3,14 @@ baserow:
   api_token: w5YLuEJF6pTm2HfrmlFBQpJYRhMiurdG
   sku_mapping_table_id: 602281
   combo_sku_table_id: 598588
-  inventory_table_id: 609664
+  inventory_table_id: 613528
   processed_sales_data_table_id: 598432
   category_table_id: 598433
   purchase_orders_table_id: 598617
   catalogue_table_id: 600174
   po_intake_log_table_id: 612237
+  automated_outbound_table_id: 609581
+  packaging_inventory_table_id: 613148
   inventory_warehouse_columns:
   - TLCQ
   - PNQ2
