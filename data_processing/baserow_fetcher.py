@@ -780,3 +780,56 @@ class BaserowFetcher:
             
         logger.info(f"Successfully processed {len(final_df)} unique MSKU image records.")
         return final_df
+    
+    def get_outbound_packaging_data(self, table_id):
+        """
+        Fetches the raw outbound data containing packaging material lists.
+        """
+        logger.info(f"Fetching outbound packaging data from table {table_id}")
+        
+        # Required columns from the 'Automated Outbound Daily' table
+        required_cols = ['Date', 'Packaging List']
+        
+        df = self.get_table_data_as_dataframe(table_id, required_columns=required_cols)
+        
+        if df.empty:
+            logger.warning(f"No outbound packaging data fetched from table {table_id}.")
+            return pd.DataFrame(columns=required_cols)
+
+        # Clean the data
+        df['Date'] = pd.to_datetime(df['Date'], format='%d-%b-%Y', errors='coerce').dt.date # Format: 18-Jul-25
+        df.dropna(subset=['Date', 'Packaging List'], inplace=True) # Drop rows where essential info is missing
+        df = df[df['Packaging List'] != ''] # Filter out empty packaging lists
+        
+        logger.info(f"Successfully processed {len(df)} outbound records with packaging lists.")
+        return df
+
+    def get_packaging_inventory(self, table_id):
+        """
+        Fetches the current inventory for packaging materials.
+        """
+        logger.info(f"Fetching packaging material inventory from table {table_id}")
+        
+        # Required columns from the 'Packing Material Inventory' table
+        required_cols = ['material', 'Current Inventory']
+        
+        df = self.get_table_data_as_dataframe(table_id, required_columns=required_cols)
+        
+        if df.empty:
+            logger.warning(f"No packaging inventory data fetched from table {table_id}.")
+            return pd.DataFrame(columns=['Material Name', 'Current Inventory'])
+
+        # Standardize column names and clean data
+        df.rename(columns={'material': 'Material Name'}, inplace=True)
+        df['Current Inventory'] = pd.to_numeric(df['Current Inventory'], errors='coerce').fillna(0).astype(int)
+        df['Material Name'] = df['Material Name'].astype(str).str.strip()
+        df.dropna(subset=['Material Name'], inplace=True)
+        df = df[df['Material Name'] != '']
+
+        # Handle duplicates - sum inventory for any materials listed more than once
+        if df['Material Name'].duplicated().any():
+            logger.warning(f"Duplicate materials found in packaging inventory table {table_id}. Summing their inventory.")
+            df = df.groupby('Material Name', as_index=False)['Current Inventory'].sum()
+
+        logger.info(f"Successfully processed {len(df)} unique packaging material inventory records.")
+        return df
