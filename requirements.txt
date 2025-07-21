@@ -6,3 +6,5 @@ openpyxl
 plotly
 fpdf2  
 numpy
+gspread
+oauth2client

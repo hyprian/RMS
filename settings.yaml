@@ -1,16 +1,6 @@
 baserow:
   base_url: https://api.baserow.io
   api_token: w5YLuEJF6pTm2HfrmlFBQpJYRhMiurdG
-  sku_mapping_table_id: 602281
-  combo_sku_table_id: 598588
-  inventory_table_id: 613528
-  processed_sales_data_table_id: 598432
-  category_table_id: 598433
-  purchase_orders_table_id: 598617
-  catalogue_table_id: 600174
-  po_intake_log_table_id: 612237
-  automated_outbound_table_id: 614801
-  packaging_inventory_table_id: 613148
   inventory_warehouse_columns:
   - TLCQ
   - PNQ2
@@ -61,33 +51,33 @@ platforms:
     slug: ms_acc_rudra
     sku_column: SKU
     quantity_column: Quantity
-- name: "Shopify"
-  slug: "shopify"
+- name: Shopify
+  slug: shopify
   accounts:
-    - name: "Fusked (Shopify)"
-      slug: "shopify_fusked"
-      sku_column: "Lineitem sku"
-      quantity_column: "Lineitem quantity"
-      report_settings:
-        date_column: "Created at"
-        revenue_column: "Total"
-    - name: "CSTE (Shopify)"
-      slug: "shopify_cste"
-      sku_column: "Lineitem sku"
-      quantity_column: "Lineitem quantity"
-      report_settings:
-        date_column: "Created at"
-        revenue_column: "Total"
-- name: "FirstCry"
-  slug: "firstcry"
+  - name: Fusked (Shopify)
+    slug: shopify_fusked
+    sku_column: Lineitem sku
+    quantity_column: Lineitem quantity
+    report_settings:
+      date_column: Created at
+      revenue_column: Total
+  - name: CSTE (Shopify)
+    slug: shopify_cste
+    sku_column: Lineitem sku
+    quantity_column: Lineitem quantity
+    report_settings:
+      date_column: Created at
+      revenue_column: Total
+- name: FirstCry
+  slug: firstcry
   accounts:
-    - name: "Main Account (FirstCry)"
-      slug: "firstcry_main"
-      sku_column: "VendorStyleCode"
-      quantity_column: "Quantity"
-      report_settings:
-        date_column: "OrderDate"
-        revenue_column: "MRP Sales"
+  - name: Main Account (FirstCry)
+    slug: firstcry_main
+    sku_column: VendorStyleCode
+    quantity_column: Quantity
+    report_settings:
+      date_column: OrderDate
+      revenue_column: MRP Sales
 default_sales_report_columns:
   sku_column: SKU
   quantity_column: Quantity
@@ -96,3 +86,6 @@ data_paths:
   sales_reports_subdir: sales
 replenishment_table:
   feature_date_format: '%d-%b-%Y'
+google_sheet_settings:
+  spreadsheet_id: 1u14J32olXDldR2UMfkt-CwGkJxkbna4-YYnvtSuJrbA
+  worksheet_name: Config
