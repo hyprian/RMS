@@ -9,36 +9,28 @@ logger = logging.getLogger(__name__)
 def process_outbound_to_daily_consumption(outbound_df: pd.DataFrame) -> pd.DataFrame:
     """
     Transforms raw outbound data into a daily consumption log for each packaging material.
-    Handles 'Packaging List' being either a string or a list of strings.
+    It splits the comma-separated 'Material Name' string and explodes it into individual rows.
     """
-    if outbound_df is None or outbound_df.empty or 'Packaging List' not in outbound_df.columns:
+    # --- FIX: Check for 'Material Name' instead of 'Packaging List' ---
+    if outbound_df is None or outbound_df.empty or 'Material Name' not in outbound_df.columns:
+        logger.warning("process_outbound_to_daily_consumption received empty DataFrame or 'Material Name' column is missing.")
         return pd.DataFrame(columns=['Date', 'Material Name', 'Quantity Used'])
 
-    # --- ROBUST PROCESSING LOGIC ---
-    # Create a new column to hold the list of materials, regardless of input type.
+    # --- FIX: Use 'Material Name' column for splitting ---
+    # Ensure the column is treated as a string
+    outbound_df['Material Name'] = outbound_df['Material Name'].astype(str)
     
-    def to_list(entry):
-        if isinstance(entry, list):
-            return entry # It's already a list
-        if isinstance(entry, str):
-            # Handle both comma-separated and space-separated strings just in case
-            if ',' in entry:
-                return [item.strip() for item in entry.split(',')]
-            else:
-                return entry.split() # Splits by whitespace
-        return [] # Return empty list for other types (like NaN)
-
-    # Apply this robust function to create the 'Materials' column
-    outbound_df['Materials'] = outbound_df['Packaging List'].apply(to_list)
-    # --- END ROBUST PROCESSING LOGIC ---
+    # Split the string by a comma, which will create a list of material strings in each row
+    outbound_df['Materials'] = outbound_df['Material Name'].str.split(',')
 
     # Explode the DataFrame so each material in the list gets its own row
     daily_consumption_df = outbound_df.explode('Materials')
     
-    # Clean up the material names
-    daily_consumption_df['Material Name'] = daily_consumption_df['Materials'].astype(str).str.strip()
+    # Clean up the material names (remove extra whitespace from each item)
+    # The new 'Material Name' column will be created from the exploded 'Materials'
+    daily_consumption_df['Material Name'] = daily_consumption_df['Materials'].str.strip()
     
-    # Drop any rows that might have become empty
+    # Drop any rows that might have become empty after stripping (e.g., from trailing commas)
     daily_consumption_df.dropna(subset=['Material Name'], inplace=True)
     daily_consumption_df = daily_consumption_df[daily_consumption_df['Material Name'] != '']
     
@@ -47,6 +39,7 @@ def process_outbound_to_daily_consumption(outbound_df: pd.DataFrame) -> pd.DataF
     
     logger.info(f"Processed outbound data into {len(daily_counts)} daily consumption records.")
     return daily_counts
+
 
 def calculate_packaging_velocity(daily_consumption_df: pd.DataFrame, days_period: int) -> pd.Series:
     """
@@ -114,12 +107,15 @@ def calculate_packaging_replenishment(
     replen_df['Reorder Point'] = (replen_df['Avg Daily Usage'] * lead_time) + replen_df['Safety Stock']
     replen_df['Target Stock Level'] = replen_df['Reorder Point'] + (replen_df['Avg Daily Usage'] * 30) # e.g., reorder point + 30 days of stock
     
-    replen_df['Suggested Order Qty'] = np.where(
+    suggested_qty = np.where(
         replen_df['Current Inventory'] <= replen_df['Reorder Point'],
         replen_df['Target Stock Level'] - replen_df['Current Inventory'],
         0
-    ).clip(lower=0)
-
+    )
+    replen_df['Suggested Order Qty'] = suggested_qty
+    
+    # Now, apply the clip to the Pandas Series (the column), which is more robust.
+    replen_df['Suggested Order Qty'] = replen_df['Suggested Order Qty'].clip(lower=0)
     # Round up unit values
     for col in ['Safety Stock', 'Reorder Point', 'Target Stock Level', 'Suggested Order Qty']:
         replen_df[col] = np.ceil(replen_df[col]).astype(int)

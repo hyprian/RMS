@@ -783,12 +783,12 @@ class BaserowFetcher:
     
     def get_outbound_packaging_data(self, table_id):
         """
-        Fetches the raw outbound data containing packaging material lists.
+        Fetches the raw outbound data containing the packaging material used for each shipment.
         """
         logger.info(f"Fetching outbound packaging data from table {table_id}")
         
-        # Required columns from the 'Automated Outbound Daily' table
-        required_cols = ['Date', 'Packaging List']
+        # --- MODIFIED: Update the required columns ---
+        required_cols = ['Date', 'Packing material']
         
         df = self.get_table_data_as_dataframe(table_id, required_columns=required_cols)
         
@@ -797,13 +797,19 @@ class BaserowFetcher:
             return pd.DataFrame(columns=required_cols)
 
         # Clean the data
-        df['Date'] = pd.to_datetime(df['Date'], format='%d-%b-%Y', errors='coerce').dt.date # Format: 18-Jul-25
-        df.dropna(subset=['Date', 'Packaging List'], inplace=True) # Drop rows where essential info is missing
-        df = df[df['Packaging List'] != ''] # Filter out empty packaging lists
+        date_format = '%d-%b-%Y'
+        df['Date'] = pd.to_datetime(df['Date'], format=date_format, errors='coerce').dt.date
         
-        logger.info(f"Successfully processed {len(df)} outbound records with packaging lists.")
+        # Standardize the column name for consistency in our app
+        df.rename(columns={'Packing material': 'Material Name'}, inplace=True)
+        
+        # Drop rows where essential info is missing
+        df.dropna(subset=['Date', 'Material Name'], inplace=True)
+        df = df[df['Material Name'] != '']
+        
+        logger.info(f"Successfully processed {len(df)} outbound records with packaging material.")
         return df
-
+    
     def get_packaging_inventory(self, table_id):
         """
         Fetches the current inventory for packaging materials.
