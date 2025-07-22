@@ -1,6 +1,6 @@
 baserow:
   base_url: https://api.baserow.io
-  api_token: xmGq8yt7RVMs8sG686vskMfLfBCQUKZE
+  api_token: 7AB494siWdT7we5b09jyVVBpIh8nsg5t
   inventory_warehouse_columns:
   - TLCQ
   - PNQ2
@@ -18,7 +18,7 @@ cache:
   directory: .rms_cache
   expiry_days: 5
 logging:
-  level: INFO
+  level: DEBUG
   format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
   file_name: rms_app.log
 platforms:

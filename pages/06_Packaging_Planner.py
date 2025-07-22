@@ -39,6 +39,12 @@ if not fetcher:
 outbound_table_id = APP_CONFIG['baserow'].get('automated_outbound_table_id')
 inventory_table_id = APP_CONFIG['baserow'].get('packaging_inventory_table_id')
 
+# st.warning(f"DEBUG: The app is using the following Table IDs for this page:")
+# st.code(f"""
+# Automated Outbound Table ID: {outbound_table_id} (Type: {type(outbound_table_id)})
+# Packaging Inventory Table ID: {inventory_table_id} (Type: {type(inventory_table_id)})
+# """)
+
 if not outbound_table_id or not inventory_table_id:
     st.error("`automated_outbound_table_id` and `packaging_inventory_table_id` must be configured in settings.yaml.")
     st.stop()
@@ -57,7 +63,8 @@ def load_packaging_data(_fetcher, _outbound_id, _inventory_id):
         # if outbound_df is None:
         #     st.error("`outbound_df` is None.")
         # elif outbound_df.empty:
-        #     st.warning("`outbound_df` is empty. Check `get_outbound_packaging_data` function in fetcher, Baserow table name/permissions, and required column names ('Date', 'Packaging List').")
+        #     # --- CORRECTED WARNING TEXT ---
+        #     st.warning("`outbound_df` is empty. Check `get_outbound_packaging_data` function in fetcher, Baserow table name/permissions, and required column names ('Date', 'Packing material').")
         # else:
         #     st.success(f"Fetched {len(outbound_df)} raw outbound records.")
         #     st.dataframe(outbound_df.head())
@@ -84,7 +91,7 @@ def load_packaging_data(_fetcher, _outbound_id, _inventory_id):
         #     st.success(f"Processed into {len(daily_consumption_df)} daily consumption records.")
         #     st.dataframe(daily_consumption_df.head())
         
-        # st.divider()
+        st.divider()
         # # --- END TEMPORARY DEBUGGING BLOCK ---
         
         return daily_consumption_df, inventory_df

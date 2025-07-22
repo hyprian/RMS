@@ -781,34 +781,55 @@ class BaserowFetcher:
         logger.info(f"Successfully processed {len(final_df)} unique MSKU image records.")
         return final_df
     
+# RMS/data_processing/baserow_fetcher.py
+
     def get_outbound_packaging_data(self, table_id):
         """
         Fetches the raw outbound data containing the packaging material used for each shipment.
+        Handles mixed date formats and avoids creating duplicate column names.
         """
-        logger.info(f"Fetching outbound packaging data from table {table_id}")
+        logger.info(f"--- Starting get_outbound_packaging_data for table {table_id} ---")
         
-        # --- MODIFIED: Update the required columns ---
         required_cols = ['Date', 'Packing material']
         
         df = self.get_table_data_as_dataframe(table_id, required_columns=required_cols)
         
         if df.empty:
-            logger.warning(f"No outbound packaging data fetched from table {table_id}.")
-            return pd.DataFrame(columns=required_cols)
+            logger.error(f"FETCH_FAIL: get_table_data_as_dataframe returned an empty DataFrame for table {table_id}.")
+            return pd.DataFrame()
+        
+        logger.debug(f"Outbound data fetched. Columns: {df.columns.tolist()}. Head:\n{df.head().to_string()}")
 
-        # Clean the data
-        date_format = '%d-%b-%Y'
-        df['Date'] = pd.to_datetime(df['Date'], format=date_format, errors='coerce').dt.date
+        # --- THIS IS THE FIX ---
+        # 1. Parse the original 'Date' column. Let Pandas infer the format.
+        parsed_dates = pd.to_datetime(df['Date'], errors='coerce').dt.date
         
-        # Standardize the column name for consistency in our app
-        df.rename(columns={'Packing material': 'Material Name'}, inplace=True)
+        # 2. Create the final DataFrame by selecting and renaming columns in one step.
+        #    This avoids creating intermediate columns with conflicting names.
+        final_df = pd.DataFrame({
+            'Date': parsed_dates,
+            'Material Name': df['Packing material'].astype(str) # Select and rename in one go
+        })
+        # --- END FIX ---
         
-        # Drop rows where essential info is missing
-        df.dropna(subset=['Date', 'Material Name'], inplace=True)
-        df = df[df['Material Name'] != '']
+        # 3. Now, perform cleaning on the new, clean DataFrame.
+        # Handle cases where 'Material Name' might be None/NaN, fill with empty string
+        final_df['Material Name'] = final_df['Material Name'].fillna('')
         
-        logger.info(f"Successfully processed {len(df)} outbound records with packaging material.")
-        return df
+        # Drop rows where the date could not be parsed
+        df_before_drop = len(final_df)
+        final_df.dropna(subset=['Date'], inplace=True)
+        num_null_dates = df_before_drop - len(final_df)
+        
+        if num_null_dates > 0:
+            logger.warning(f"DATE_PARSE_WARN: Dropped {num_null_dates} out of {df_before_drop} rows due to invalid dates.")
+        
+        if final_df.empty:
+            logger.warning("DataFrame became empty after dropping rows with invalid dates.")
+            return pd.DataFrame()
+        
+        logger.info(f"Successfully processed {len(final_df)} outbound records.")
+        return final_df
     
     def get_packaging_inventory(self, table_id):
         """
