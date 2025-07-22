@@ -1,6 +1,6 @@
 baserow:
   base_url: https://api.baserow.io
-  api_token: w5YLuEJF6pTm2HfrmlFBQpJYRhMiurdG
+  api_token: xmGq8yt7RVMs8sG686vskMfLfBCQUKZE
   inventory_warehouse_columns:
   - TLCQ
   - PNQ2
