@@ -20,6 +20,7 @@ from analytics_dashboard.kpi_calculations import (
     calculate_sales_velocity
 )
 from replenishment.replenishment_logic import calculate_replenishment_data
+from po_module.po_management import get_all_pos, get_distinct_values # Import this helper
 
 import logging
 logger = logging.getLogger(__name__)
@@ -43,8 +44,10 @@ processed_sales_table_id = APP_CONFIG['baserow'].get('processed_sales_data_table
 inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
 category_table_id = APP_CONFIG['baserow'].get('category_table_id')
 catalogue_table_id = APP_CONFIG['baserow'].get('catalogue_table_id') 
-if not all([processed_sales_table_id, inventory_table_id, category_table_id, catalogue_table_id]):
-    st.error("All table IDs (sales, inventory, category, catalogue) must be configured.")
+po_table_id = APP_CONFIG['baserow'].get('purchase_orders_table_id') # For vendor list
+
+if not all([processed_sales_table_id, inventory_table_id, category_table_id, catalogue_table_id, po_table_id]):
+    st.error("All table IDs (sales, inventory, category, catalogue, purchase_orders) must be configured.")
     st.stop()
 
 # Load all data into session state
@@ -53,6 +56,11 @@ all_sales_df = st.session_state.get('analytics_sales_df')
 all_inventory_df = st.session_state.get('analytics_inventory_df')
 all_category_df = st.session_state.get('analytics_category_df')
 all_catalogue_df = st.session_state.get('analytics_catalogue_df')
+# Load PO data to get vendor list
+if 'po_all_pos_df' not in st.session_state:
+    st.session_state.po_all_pos_df = get_all_pos(fetcher, po_table_id)
+all_pos_df = st.session_state.get('po_all_pos_df', pd.DataFrame())
+
 
 # --- Initialize Session State for this page ---
 if 'replenishment_overview_df' not in st.session_state:
@@ -61,8 +69,8 @@ if 'replenishment_plan_draft_df' not in st.session_state:
     st.session_state.replenishment_plan_draft_df = pd.DataFrame(columns=['MSKU', 'Category', 'HSN Code', 'Image URL', 'Order Quantity', 'Notes'])
 
 # --- Sidebar Controls ---
-st.sidebar.header("Replenishment Parameters")
 # ... (sidebar controls remain the same) ...
+st.sidebar.header("Replenishment Parameters")
 velocity_period = st.sidebar.selectbox("Calculate Sales Velocity based on last:", options=[7, 14, 30, 60, 90], index=2, format_func=lambda x: f"{x} days")
 st.sidebar.subheader("Default Parameters")
 default_lead_time = st.sidebar.number_input("Supplier Lead Time (days)", min_value=1, value=30)
@@ -99,7 +107,7 @@ st.header("Replenishment Overview")
 overview_df = st.session_state.get('replenishment_overview_df')
 
 if overview_df is not None and not overview_df.empty:
-    # --- Filter Section for Overview ---
+    # ... (Filter section remains the same) ...
     col_filter1, col_filter2 = st.columns(2)
     with col_filter1:
         all_categories = ['All Categories'] + sorted(overview_df['Category'].unique().tolist())
@@ -107,33 +115,16 @@ if overview_df is not None and not overview_df.empty:
     with col_filter2:
         all_statuses = ['All Statuses'] + sorted(overview_df['Status'].unique().tolist())
         selected_status = st.selectbox("Filter by Status:", options=all_statuses)
-
     hide_zero_rows = st.checkbox("Hide items with zero inventory AND zero average daily sales", value=True)
-
-    # Apply filters
     filtered_overview_df = overview_df.copy()
-    if selected_category != 'All Categories':
-        filtered_overview_df = filtered_overview_df[filtered_overview_df['Category'] == selected_category]
-    if selected_status != 'All Statuses':
-        filtered_overview_df = filtered_overview_df[filtered_overview_df['Status'] == selected_status]
-
-
+    if selected_category != 'All Categories': filtered_overview_df = filtered_overview_df[filtered_overview_df['Category'] == selected_category]
+    if selected_status != 'All Statuses': filtered_overview_df = filtered_overview_df[filtered_overview_df['Status'] == selected_status]
     if hide_zero_rows:
-        # Keep rows where EITHER Current Inventory is NOT 0 OR Avg Daily Sales is NOT 0
-        filtered_overview_df = filtered_overview_df[
-            (filtered_overview_df['Current Inventory'] != 0) | 
-            (filtered_overview_df['Avg Daily Sales'] != 0)
-        ]
+        filtered_overview_df = filtered_overview_df[(filtered_overview_df['Current Inventory'] != 0) | (filtered_overview_df['Avg Daily Sales'] != 0)]
 
-    # Add a "Select" column for adding to the plan
     filtered_overview_df['Select'] = False
+    overview_display_cols = ['Select', 'Image URL', 'MSKU', 'Category', 'Status', 'Current Inventory', 'Avg Daily Sales', 'DOS', 'Reorder Point', 'Suggested Order Qty']
     
-    # Define columns to display in the overview
-    overview_display_cols = ['Select', 'Image URL','MSKU', 'Category', 'Status', 'Current Inventory', 'Avg Daily Sales', 'DOS', 
-            'Reorder Point', 'Suggested Order Qty', 'Lead Time (days)', 
-            'Stock Cover (days)', 'Target Stock Level']
-    
-    # Use st.data_editor to make the "Select" column interactive
     edited_overview_df = st.data_editor(
         filtered_overview_df[overview_display_cols],
         column_config={
@@ -151,21 +142,24 @@ if overview_df is not None and not overview_df.empty:
         hide_index=True, use_container_width=True, key="overview_editor"
     )
 
-    # --- "Add to Plan" Button Logic ---
     selected_rows = edited_overview_df[edited_overview_df['Select']]
     if st.button("Add Selected to Plan Draft", disabled=selected_rows.empty):
         for index, row in selected_rows.iterrows():
-            # Check if MSKU is already in the draft
             if row['MSKU'] not in st.session_state.replenishment_plan_draft_df['MSKU'].values:
+                # Get full data for the selected MSKU from the original overview_df
+                full_row_data = overview_df[overview_df['MSKU'] == row['MSKU']].iloc[0]
+                
                 new_item = {
                     'MSKU': row['MSKU'],
                     'Category': row['Category'],
-                    'HSN Code': overview_df[overview_df['MSKU'] == row['MSKU']].iloc[0].get('HSN Code', ''), # Get HSN from original df
+                    'HSN Code': full_row_data.get('HSN Code', ''),
                     'Image URL': row['Image URL'],
-                    'Order Quantity': row['Suggested Order Qty'], # Pre-fill with suggested qty
-                    'Notes': '' # Add an empty notes field
+                    'Order Quantity': row['Suggested Order Qty'],
+                    'Notes': '',
+                    'Vendor Name': '', # Add a blank supplier field
+                    'Unit Cost': 0.0, # Add a blank cost field
+                    'Currency': 'USD' # Default currency
                 }
-                # Convert to DataFrame to concatenate
                 new_item_df = pd.DataFrame([new_item])
                 st.session_state.replenishment_plan_draft_df = pd.concat(
                     [st.session_state.replenishment_plan_draft_df, new_item_df],
@@ -184,7 +178,10 @@ st.header("Replenishment Plan Draft")
 draft_df = st.session_state.get('replenishment_plan_draft_df')
 
 if draft_df is not None and not draft_df.empty:
-    st.info("Edit the 'Order Quantity' and add 'Notes' as needed. This is the final plan to be ordered.")
+    st.info("Assign a **Supplier** and confirm the **Unit Cost** and **Order Quantity** for each item.")
+    
+    # Get vendor options for the dropdown
+    vendor_options = [""] + get_distinct_values(all_pos_df, 'Vendor Name')
     
     edited_draft_df = st.data_editor(
         draft_df,
@@ -194,14 +191,58 @@ if draft_df is not None and not draft_df.empty:
             "HSN Code": st.column_config.TextColumn(disabled=True),
             "Image URL": st.column_config.ImageColumn("Image"),
             "Order Quantity": st.column_config.NumberColumn(min_value=0, step=10, required=True),
-            "Notes": st.column_config.TextColumn(width="large")
+            "Notes": st.column_config.TextColumn(width="large"),
+            # --- NEW: Supplier and Cost columns ---
+            "Vendor Name": st.column_config.SelectboxColumn(options=vendor_options, required=True),
+            "Unit Cost": st.column_config.NumberColumn(min_value=0.0, format="%.4f", required=True),
+            "Currency": st.column_config.SelectboxColumn(options=["USD", "CNY", "INR"], required=True)
         },
-        num_rows="dynamic", # Allow deleting rows from the draft
         hide_index=True, use_container_width=True, key="draft_editor"
     )
     
-    # Update session state with edits from the draft editor
     st.session_state.replenishment_plan_draft_df = edited_draft_df
+
+    # --- NEW: "Add to PO Drafts" Button ---
+    st.markdown("---")
+    if st.button("Send Plan to PO Workspace", type="primary"):
+        draft_to_process = edited_draft_df.copy()
+        
+        if draft_to_process['Vendor Name'].eq('').any():
+            st.error("Please assign a Vendor Name to every item in the draft before proceeding.")
+        else:
+            with st.spinner("Preparing PO Draft..."):
+                # Initialize the PO creation draft state if it doesn't exist
+                if 'po_draft_items' not in st.session_state:
+                    st.session_state.po_draft_items = []
+
+                # Convert the DataFrame of items into a list of dicts for the PO page
+                items_list = []
+                for i, item_row in draft_to_process.iterrows():
+                    qty = item_row['Order Quantity']
+                    price = item_row['Unit Cost']
+                    currency = item_row['Currency']
+                    total_foreign_amt = float(qty) * float(price)
+                    
+                    items_list.append({
+                        "MSKU": item_row['MSKU'],
+                        "Category": item_row['Category'],
+                        "Quantity": qty,
+                        "Currency": currency,
+                        "per pcs price usd": price, # This key is used on the Create PO page
+                        "USD Amt": total_foreign_amt, # This key is used on the Create PO page
+                        "INR Amt": 0.0, # User will calculate/input this on the Create PO page
+                        "HSN Code": item_row['HSN Code'],
+                        "Vendor Name": item_row['Vendor Name'] # Pass the vendor name
+                    })
+
+                # Append these items to the main PO draft state
+                st.session_state.po_draft_items.extend(items_list)
+                
+                st.success(f"Successfully sent {len(items_list)} items to the PO Workspace!")
+                st.info("Navigate to the 'Create Purchase Order' page to finalize.")
+                # Clear the replenishment draft after processing
+                st.session_state.replenishment_plan_draft_df = pd.DataFrame(columns=draft_df.columns)
+                st.rerun()
 
     st.subheader("Download Plan Draft")
     col_dl1, col_dl2 = st.columns(2)

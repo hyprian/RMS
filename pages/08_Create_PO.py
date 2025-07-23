@@ -22,155 +22,199 @@ import logging
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Create Purchase Order - RMS", layout="wide")
-st.title("📝 Create New Purchase Order")
+st.title("📝 Purchase Order Workspace")
 
-# --- All initialization code remains the same ---
+# --- Initialize Tools & Load Data ---
 @st.cache_resource
 def get_po_tools():
     try:
         fetcher = BaserowFetcher(api_token=APP_CONFIG['baserow']['api_token'], base_url=APP_CONFIG['baserow'].get('base_url'))
         return fetcher
     except Exception as e: st.error(f"Error initializing Baserow connection: {e}"); return None
+
 fetcher = get_po_tools()
 if not fetcher: st.error("Failed to initialize Baserow connection."); st.stop()
+
 po_table_id = APP_CONFIG['baserow'].get('purchase_orders_table_id')
 category_table_id = APP_CONFIG['baserow'].get('category_table_id')
 if not po_table_id or not category_table_id:
     st.error("`purchase_orders_table_id` and `category_table_id` must be configured in settings.yaml.")
     st.stop()
+
 if 'po_all_pos_df' not in st.session_state:
     st.session_state.po_all_pos_df = get_all_pos(fetcher, po_table_id)
 if 'analytics_category_df' not in st.session_state:
-    load_and_cache_analytics_data(fetcher, None, None, category_table_id,None)
+    load_and_cache_analytics_data(fetcher, None, None, category_table_id, None)
+
 all_pos_df = st.session_state.get('po_all_pos_df', pd.DataFrame())
 all_category_df = st.session_state.get('analytics_category_df', pd.DataFrame())
+
+# --- Initialize Session State ---
 if 'po_draft_items' not in st.session_state:
     st.session_state.po_draft_items = []
+if 'pending_replenishment_plans' not in st.session_state:
+    st.session_state.pending_replenishment_plans = {}
 if 'po_header_initialized' not in st.session_state:
-    st.session_state.po_header_po_number = generate_po_number()
-    st.session_state.po_header_vendor_select = ""
-    st.session_state.po_header_vendor_text = ""
-    st.session_state.po_header_order_date = date.today()
-    st.session_state.po_header_arrive_by = date.today() + timedelta(days=45)
-    st.session_state.po_header_forwarder_select = ""
-    st.session_state.po_header_forwarder_text = ""
-    st.session_state.po_header_shipment_route = "Air"
-    st.session_state.po_header_projection_code = "00-00-001"
-    st.session_state.po_header_carrying_amount = 0.0
-    st.session_state.po_header_porter_charges = 0.0
-    st.session_state.po_header_packaging_charges = 0.0
-
-    st.session_state.po_header_initialized = True
-
+    st.session_state.po_header_initialized = False
 if 'line_item_msku' not in st.session_state:
     st.session_state.line_item_msku = ""
+if 'line_item_vendor_select' not in st.session_state:
+    st.session_state.line_item_vendor_select = ""
+if 'line_item_vendor_text' not in st.session_state:
+    st.session_state.line_item_vendor_text = ""
 if 'line_item_qty' not in st.session_state:
     st.session_state.line_item_qty = 1
-if 'line_item_price_foreign' not in st.session_state: # Renamed for clarity
+if 'line_item_price_foreign' not in st.session_state:
     st.session_state.line_item_price_foreign = 0.0
 if 'line_item_total_inr' not in st.session_state:
     st.session_state.line_item_total_inr = 0.0
-if 'line_item_currency' not in st.session_state: # New state for currency
+if 'line_item_currency' not in st.session_state:
     st.session_state.line_item_currency = "USD"
 if 'usd_to_inr_rate' not in st.session_state:
-    st.session_state.usd_to_inr_rate = 83.50 # Default value
+    st.session_state.usd_to_inr_rate = 83.50
 if 'cny_to_inr_rate' not in st.session_state:
     st.session_state.cny_to_inr_rate = 11.50
 
 # --- Callback Functions ---
+def initialize_header():
+    st.session_state.po_header_po_number = generate_po_number()
+    st.session_state.po_header_order_date = date.today()
+    st.session_state.po_header_arrive_by = date.today() + timedelta(days=45)
+    st.session_state.po_header_projection_code = "00-00-001"
+    st.session_state.po_header_carrying_amount = 0.0
+    st.session_state.po_header_porter_charges = 0.0
+    st.session_state.po_header_packaging_charges = 0.0
+    st.session_state.po_header_initialized = True
+
 def update_line_item_details():
     selected_msku = st.session_state.line_item_msku
     cost_details = get_msku_cost_details(all_category_df, selected_msku)
-    # Update price based on selected currency
     if st.session_state.line_item_currency == "INR":
         st.session_state.line_item_price_foreign = float(cost_details.get('inr_cost', 0.0))
-    else: # Default to USD cost for USD or CNY
+    else:
         st.session_state.line_item_price_foreign = float(cost_details.get('usd_cost', 0.0))
 
 def add_item_to_draft():
     msku = st.session_state.line_item_msku
-    if not msku:
-        st.warning("Please select an MSKU before adding."); return
+    vendor = st.session_state.line_item_vendor_text if st.session_state.line_item_vendor_select == "" else st.session_state.line_item_vendor_select
+    if not msku: st.warning("Please select an MSKU."); return
+    if not vendor: st.warning("Please select or enter a Vendor Name."); return
     
     msku_details = get_msku_details(all_category_df, msku)
-    
     qty = st.session_state.line_item_qty
-    price_foreign = st.session_state.line_item_price_foreign
-    total_foreign_amt = float(qty) * float(price_foreign)
+    price = st.session_state.line_item_price_foreign
     currency = st.session_state.line_item_currency
-    
-    # Determine INR amount
-    if currency == "INR":
-        total_inr = total_foreign_amt # In this case, foreign amount is INR
-    else:
-        total_inr = st.session_state.line_item_total_inr # Use the value from the (possibly edited) input box
+    total_foreign = float(qty) * float(price)
+    total_inr = st.session_state.line_item_total_inr
+    if currency == "INR": total_inr = total_foreign
 
     new_item = {
-        "MSKU": msku, "Category": msku_details.get('Category', ''), "Quantity": qty,
-        "Currency": currency, "Price/pcs": price_foreign,
-        "Foreign Currency Amt": total_foreign_amt, "INR Amt": total_inr,
-        "HSN Code": msku_details.get('HSN Code', '')
+        "MSKU": msku, "Vendor Name": vendor, "Category": msku_details.get('Category', ''),
+        "Quantity": qty, "Currency": currency, "per pcs price usd": price,
+        "USD Amt": total_foreign, "INR Amt": total_inr, "HSN Code": msku_details.get('HSN Code', '')
     }
     st.session_state.po_draft_items.append(new_item)
     st.success(f"Added {qty} x {msku} to the draft.")
-    
-    # Reset form fields
-    st.session_state.line_item_msku = ""
-    st.session_state.line_item_qty = 1
-    st.session_state.line_item_price_foreign = 0.0
-    st.session_state.line_item_total_inr = 0.0
+    st.session_state.line_item_msku = ""; st.session_state.line_item_qty = 1
+    st.session_state.line_item_price_foreign = 0.0; st.session_state.line_item_total_inr = 0.0
+
+if not st.session_state.po_header_initialized:
+    initialize_header()
+
+
+# # --- NEW LAYOUT: Place Conversion Rates in the Sidebar ---
+# st.sidebar.header("Currency Conversion")
+# # These widgets will now run early and their state will be available for all button clicks
+# usd_rate = st.sidebar.number_input("USD to INR Rate", key="usd_to_inr_rate", min_value=0.0, format="%.2f")
+# cny_rate = st.sidebar.number_input("CNY to INR Rate", key="cny_to_inr_rate", min_value=0.0, format="%.2f")
+
+
+# --- Load Plan from Replenishment Planner ---
+if st.session_state.pending_replenishment_plans:
+    st.header("📥 Load Plan from Replenishment Planner")
+    with st.container(border=True):
+        plan_keys = list(st.session_state.pending_replenishment_plans.keys())
+        selected_plan_key = st.selectbox("Select a plan to load into the draft:", options=[""] + plan_keys)
+
+        if selected_plan_key:
+            if st.button(f"Load Plan: {selected_plan_key}", type="primary"):
+                items_to_load = st.session_state.pending_replenishment_plans[selected_plan_key]
+                
+                draft_items = []
+                for item in items_to_load:
+                    qty = item.get('Order Quantity', 1)
+                    price = item.get('Unit Cost', 0.0)
+                    currency = item.get('Currency', 'USD')
+                    total_foreign = float(qty) * float(price)
+                    
+                    # --- FIX: Pre-calculate INR Amount ---
+                    calculated_inr = 0.0
+                    if currency == "USD":
+                        calculated_inr = total_foreign * st.session_state.usd_to_inr_rate 
+                    elif currency == "CNY":
+                        calculated_inr = total_foreign * st.session_state.cny_to_inr_rate 
+                    elif currency == "INR":
+                        calculated_inr = total_foreign
+                    
+                    draft_items.append({
+                        "MSKU": item.get('MSKU'), "Vendor Name": item.get('Vendor Name'),
+                        "Category": item.get('Category'), "Quantity": qty, "Currency": currency,
+                        "per pcs price usd": price, "USD Amt": total_foreign,
+                        "INR Amt": calculated_inr, # Use the calculated value
+                        "HSN Code": item.get('HSN Code')
+                    })
+                
+                st.session_state.po_draft_items.extend(draft_items)
+                del st.session_state.pending_replenishment_plans[selected_plan_key]
+                st.success(f"Plan '{selected_plan_key}' loaded into the draft below.")
+                st.rerun()
+    st.divider()
 
 # --- Form UI ---
 st.header("1. PO Header Information")
-# ... (Header section remains exactly the same) ...
-vendor_options = [""] + get_distinct_values(all_pos_df, 'Vendor Name')
 forwarder_options = [""] + get_distinct_values(all_pos_df, 'Forwarder')
+
 with st.container(border=True):
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.text_input("PO Number", key="po_header_po_number", help="A unique PO number.")
-        vendor_name_select = st.selectbox("Vendor Name", options=vendor_options, key="po_header_vendor_select")
-        vendor_name_text = st.text_input("Or, Enter New Vendor Name:", key="po_header_vendor_text")
+        st.text_input("PO Number", key="po_header_po_number")
+        st.text_input("Projection Code", key="po_header_projection_code")
     with col2:
         st.date_input("Order Date", key="po_header_order_date")
         st.date_input("Arrive by Date", key="po_header_arrive_by")
     with col3:
-        forwarder_select = st.selectbox("Forwarder", options=forwarder_options, key="po_header_forwarder_select")
-        forwarder_text = st.text_input("Or, Enter New Forwarder:", key="po_header_forwarder_text")
+        st.selectbox("Forwarder", options=forwarder_options, key="po_header_forwarder_select")
+        st.text_input("Or, New Forwarder:", key="po_header_forwarder_text")
         st.selectbox("Shipment Route", options=["Air", "Sea"], key="po_header_shipment_route")
-    col4, col5, col6 = st.columns(3)
-    with col4:
-        st.number_input("Carrying Amount (INR)", key="po_header_carrying_amount", min_value=0.0, format="%.2f")
-    with col5:
-        st.number_input("Porter Charges (INR)", key="po_header_porter_charges", min_value=0.0, format="%.2f")
-    with col6:
-        st.number_input("Packaging/Other Charges (INR)", key="po_header_packaging_charges", min_value=0.0, format="%.2f")
     
-    st.text_input("Projection Code", key="po_header_projection_code", help="Enter the code in XX-XX-001 format.")
+    st.subheader("Additional PO-Level Charges (Optional)")
+    charge_col1, charge_col2, charge_col3 = st.columns(3)
+    with charge_col1: st.number_input("Carrying Amount (INR)", key="po_header_carrying_amount", min_value=0.0, format="%.2f")
+    with charge_col2: st.number_input("Porter Charges (INR)", key="po_header_porter_charges", min_value=0.0, format="%.2f")
+    with charge_col3: st.number_input("Packaging/Other Charges (INR)", key="po_header_packaging_charges", min_value=0.0, format="%.2f")
 
 st.divider()
-st.header("2. Add Line Items")
-
-# --- NEW: Conversion Rate Inputs ---
+st.header("2. Add Line Items Manually")
 st.sidebar.header("Currency Conversion")
 st.sidebar.number_input("USD to INR Rate", key="usd_to_inr_rate", min_value=0.0, format="%.2f")
 st.sidebar.number_input("CNY to INR Rate", key="cny_to_inr_rate", min_value=0.0, format="%.2f")
 
 with st.container(border=True):
     msku_options = [""] + (sorted(all_category_df['MSKU'].unique()) if all_category_df is not None and not all_category_df.empty else [])
-    
-    item_col1, item_col2, item_col3 = st.columns([3, 2, 1])
+    vendor_options = [""] + get_distinct_values(all_pos_df, 'Vendor Name')
+
+    item_col1, item_col2, item_col3 = st.columns([3, 2, 2])
     with item_col1:
         st.selectbox("Select MSKU", options=msku_options, key="line_item_msku", on_change=update_line_item_details)
     msku_details = get_msku_details(all_category_df, st.session_state.line_item_msku)
     with item_col2:
         st.text_input("Category", value=msku_details.get('Category', ''), disabled=True, key="line_item_category_display")
     with item_col3:
-        st.text_input("HSN Code", value=msku_details.get('HSN Code', ''), disabled=True, key="line_item_hsn_display")
+        st.selectbox("Vendor Name", options=vendor_options, key="line_item_vendor_select")
+        st.text_input("Or, Enter New Vendor Name:", key="line_item_vendor_text")
     
     st.markdown("---")
     
-    # --- MODIFIED SECTION FOR CURRENCY ---
     calc_col1, calc_col2, calc_col3, calc_col4, calc_col5 = st.columns([1, 2, 2, 2, 2])
     with calc_col1:
         st.number_input("Quantity", min_value=1, value=1, step=1, key="line_item_qty")
@@ -187,46 +231,47 @@ with st.container(border=True):
     with calc_col4:
         st.metric(f"Total {currency} Amt", f"{currency_symbol}{total_foreign_amt:,.2f}")
     
-    # Auto-calculate INR value
     calculated_inr = 0.0
-    if currency == "USD":
-        calculated_inr = total_foreign_amt * st.session_state.usd_to_inr_rate
-    elif currency == "CNY":
-        calculated_inr = total_foreign_amt * st.session_state.cny_to_inr_rate
-    elif currency == "INR":
-        calculated_inr = total_foreign_amt # In this case, the "foreign" amount is INR
+    if currency == "USD": calculated_inr = total_foreign_amt * st.session_state.usd_to_inr_rate 
+    elif currency == "CNY": calculated_inr = total_foreign_amt * st.session_state.cny_to_inr_rate 
+    elif currency == "INR": calculated_inr = total_foreign_amt
 
     with calc_col5:
-        st.number_input(
-            "Total INR Amt", 
-            min_value=0.0, 
-            value=calculated_inr, # Set the calculated value as the default
-            format="%.2f", 
-            key="line_item_total_inr",
-            disabled=(currency == "INR") # Disable if currency is INR
-        )
+        st.number_input("Total INR Amt", min_value=0.0, value=calculated_inr, format="%.2f", key="line_item_total_inr", disabled=(currency == "INR"))
 
     st.button("Add Item to PO Draft", on_click=add_item_to_draft, use_container_width=True)
-    
+
 st.divider()
 st.header("3. PO Draft")
 if st.session_state.po_draft_items:
-    # Rename columns for display in the draft table
     draft_df = pd.DataFrame(st.session_state.po_draft_items)
-    display_draft_df = draft_df.rename(columns={
-        "Price/pcs": f"Price/pcs ({draft_df['Currency'].iloc[0]})" if not draft_df.empty else "Price/pcs",
-        "Foreign Currency Amt": f"Total Amt ({draft_df['Currency'].iloc[0]})" if not draft_df.empty else "Total Amt"
-    })
-    st.dataframe(display_draft_df, use_container_width=True)
+    st.info("Review and make final edits to the draft below before creating the PO.")
     
-    total_draft_value_inr = draft_df['INR Amt'].sum()
+    edited_po_draft_df = st.data_editor(
+        draft_df,
+        column_config={
+            "MSKU": st.column_config.TextColumn(disabled=True),
+            "Vendor Name": st.column_config.SelectboxColumn(options=vendor_options, required=True),
+            "Category": st.column_config.TextColumn(disabled=True),
+            "Quantity": st.column_config.NumberColumn(required=True),
+            "Currency": st.column_config.SelectboxColumn(options=["USD", "CNY", "INR"], required=True),
+            "per pcs price usd": st.column_config.NumberColumn("Price/pcs", format="%.4f", required=True),
+            "USD Amt": st.column_config.NumberColumn("Total Foreign Amt", format="%.2f", disabled=True),
+            "INR Amt": st.column_config.NumberColumn("Total INR Amt", format="%.2f", required=True),
+            "HSN Code": st.column_config.TextColumn(disabled=True),
+        },
+        hide_index=True, use_container_width=True, key="final_po_draft_editor"
+    )
+    st.session_state.po_draft_items = edited_po_draft_df.to_dict('records')
+    
+    total_draft_value_inr = edited_po_draft_df['INR Amt'].sum()
     st.metric("Total Draft Value", f"₹{total_draft_value_inr:,.2f}")
     if st.button("Clear Draft Items", key="clear_draft"):
         st.session_state.po_draft_items = []
         st.rerun()
 else:
-    st.info("No items have been added to the PO draft yet.")
-
+    st.info("No items in draft. Add items manually or load a plan from the Replenishment Planner.")
+    
 st.divider()
 st.header("4. Attachments & Final Submission")
 allowed_invoice_types = ["pdf","jpg", "jpeg", "csv", "xlsx", "xls"]
