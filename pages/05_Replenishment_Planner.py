@@ -4,8 +4,8 @@ import pandas as pd
 from datetime import date
 import os
 import sys
-import numpy as np # Ensure numpy is imported for np.select, etc.
-from datetime import datetime, timedelta # Ensure timedelta is imported
+import numpy as np
+from datetime import datetime, timedelta
 from utils.pdf_generator import generate_replenishment_pdf
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
@@ -26,9 +26,8 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Replenishment Planner - RMS", layout="wide")
 st.title("🚚 Replenishment Planner")
-st.markdown("Analyze sales velocity and inventory to get smart replenishment recommendations.")
 
-# --- Initialize Tools & Load Data into Session State ---
+# --- Initialize Tools & Load Data ---
 @st.cache_resource
 def get_analytics_fetcher_replen():
     try:
@@ -39,29 +38,32 @@ def get_analytics_fetcher_replen():
 fetcher = get_analytics_fetcher_replen()
 if not fetcher: st.error("Failed to initialize Baserow connection."); st.stop()
 
+# Get all table IDs
 processed_sales_table_id = APP_CONFIG['baserow'].get('processed_sales_data_table_id')
 inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
 category_table_id = APP_CONFIG['baserow'].get('category_table_id')
 catalogue_table_id = APP_CONFIG['baserow'].get('catalogue_table_id') 
-
 if not all([processed_sales_table_id, inventory_table_id, category_table_id, catalogue_table_id]):
-    st.error("`processed_sales_data_table_id`, `inventory_table_id`, and `category_table_id` must be configured in settings.yaml.")
+    st.error("All table IDs (sales, inventory, category, catalogue) must be configured.")
     st.stop()
 
+# Load all data into session state
 load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id, catalogue_table_id)
 all_sales_df = st.session_state.get('analytics_sales_df')
 all_inventory_df = st.session_state.get('analytics_inventory_df')
 all_category_df = st.session_state.get('analytics_category_df')
 all_catalogue_df = st.session_state.get('analytics_catalogue_df')
 
+# --- Initialize Session State for this page ---
+if 'replenishment_overview_df' not in st.session_state:
+    st.session_state.replenishment_overview_df = None
+if 'replenishment_plan_draft_df' not in st.session_state:
+    st.session_state.replenishment_plan_draft_df = pd.DataFrame(columns=['MSKU', 'Category', 'HSN Code', 'Image URL', 'Order Quantity', 'Notes'])
+
 # --- Sidebar Controls ---
 st.sidebar.header("Replenishment Parameters")
-velocity_period = st.sidebar.selectbox(
-    "Calculate Sales Velocity based on last:",
-    options=[7, 14, 30, 60, 90],
-    index=2,
-    format_func=lambda x: f"{x} days"
-)
+# ... (sidebar controls remain the same) ...
+velocity_period = st.sidebar.selectbox("Calculate Sales Velocity based on last:", options=[7, 14, 30, 60, 90], index=2, format_func=lambda x: f"{x} days")
 st.sidebar.subheader("Default Parameters")
 default_lead_time = st.sidebar.number_input("Supplier Lead Time (days)", min_value=1, value=30)
 default_stock_cover = st.sidebar.number_input("Desired Stock Cover (days)", min_value=0, value=15)
@@ -69,161 +71,153 @@ default_order_cycle = st.sidebar.number_input("Order Cycle (days)", min_value=1,
 default_moq = st.sidebar.number_input("Minimum Order Quantity (MOQ)", min_value=0, value=0)
 
 # --- Main Page Logic ---
-if all_sales_df is None or all_sales_df.empty or all_inventory_df is None or all_inventory_df.empty:
-    st.warning("Sales or Inventory data is not available. Please upload sales reports and ensure inventory is synced.")
+if all_sales_df is None or all_inventory_df is None:
+    st.warning("Sales or Inventory data is not available.")
 else:
-    st.info(f"Using sales data up to **{all_sales_df['Sale Date'].max()}** and inventory data for **{len(all_inventory_df)} MSKUs**.")
-    
-    if st.button("Calculate Replenishment Plan", type="primary"):
-        with st.spinner("Calculating sales velocity and replenishment needs..."):
+    if st.button("Calculate Replenishment Overview", type="primary"):
+        with st.spinner("Calculating..."):
+            # ... (calculation logic is the same as before) ...
             end_date = all_sales_df['Sale Date'].max()
             start_date = end_date - timedelta(days=velocity_period - 1)
             sales_df_for_velocity = get_sales_data(all_sales_df, start_date, end_date)
             sales_velocity = calculate_sales_velocity(sales_df_for_velocity, days_period=velocity_period)
             current_inventory = get_current_inventory(all_inventory_df)
-            
-            lead_times = {'default': default_lead_time}
-            stock_cover_days = {'default': default_stock_cover}
-            order_cycle_days = {'default': default_order_cycle}
-            moqs = {'default': default_moq}
-            
-            replenishment_plan_df = calculate_replenishment_data(
-                current_inventory, sales_velocity,
-                lead_times, stock_cover_days,
-                order_cycle_days, moqs
-            )
-            
-            if all_category_df is not None and not all_category_df.empty:
-                replenishment_plan_df = pd.merge(
-                    replenishment_plan_df, 
-                    all_category_df, 
-                    on='MSKU', 
-                    how='left'
-                )
+            lead_times = {'default': default_lead_time}; stock_cover_days = {'default': default_stock_cover}
+            order_cycle_days = {'default': default_order_cycle}; moqs = {'default': default_moq}
+            replenishment_plan_df = calculate_replenishment_data(current_inventory, sales_velocity, lead_times, stock_cover_days, order_cycle_days, moqs)
+            if all_category_df is not None:
+                replenishment_plan_df = pd.merge(replenishment_plan_df, all_category_df, on='MSKU', how='left')
                 replenishment_plan_df['Category'].fillna('Uncategorized', inplace=True)
-            else:
-                replenishment_plan_df['Category'] = 'N/A'
-
-            if all_catalogue_df is not None and not all_catalogue_df.empty:
-                replenishment_plan_df = pd.merge(
-                    replenishment_plan_df,
-                    all_catalogue_df,
-                    on='MSKU',
-                    how='left'
-                )
-                # Fill missing image URLs with a placeholder or leave blank
+            if all_catalogue_df is not None:
+                replenishment_plan_df = pd.merge(replenishment_plan_df, all_catalogue_df, on='MSKU', how='left')
                 replenishment_plan_df['Image URL'].fillna('', inplace=True)
-            else:
-                replenishment_plan_df['Image URL'] = ''
             
-            st.session_state.replenishment_plan_df = replenishment_plan_df
+            st.session_state.replenishment_overview_df = replenishment_plan_df
 
-# --- Display Replenishment Table ---
-if 'replenishment_plan_df' in st.session_state and st.session_state.replenishment_plan_df is not None:
-    st.header("Replenishment Plan")
-    
-    display_df = st.session_state.replenishment_plan_df
-    
-    if not display_df.empty:
-        # --- Filter Section ---
-        col_filter1, col_filter2 = st.columns(2)
-        
-        with col_filter1:
-            all_categories = ['All Categories'] + sorted(display_df['Category'].unique().tolist())
-            selected_category = st.selectbox("Filter by Category:", options=all_categories)
-        
-        with col_filter2:
-            # --- NEW: Status Filter ---
-            all_statuses = ['All Statuses'] + sorted(display_df['Status'].unique().tolist())
-            selected_status = st.selectbox("Filter by Status:", options=all_statuses)
+# --- SECTION 1: REPLENISHMENT OVERVIEW ---
+st.header("Replenishment Overview")
+overview_df = st.session_state.get('replenishment_overview_df')
 
-        # Apply filters
-        if selected_category != 'All Categories':
-            display_df = display_df[display_df['Category'] == selected_category]
-        if selected_status != 'All Statuses':
-            display_df = display_df[display_df['Status'] == selected_status]
+if overview_df is not None and not overview_df.empty:
+    # --- Filter Section for Overview ---
+    col_filter1, col_filter2 = st.columns(2)
+    with col_filter1:
+        all_categories = ['All Categories'] + sorted(overview_df['Category'].unique().tolist())
+        selected_category = st.selectbox("Filter by Category:", options=all_categories)
+    with col_filter2:
+        all_statuses = ['All Statuses'] + sorted(overview_df['Status'].unique().tolist())
+        selected_status = st.selectbox("Filter by Status:", options=all_statuses)
 
-        display_cols = [
-            'Image URL','MSKU', 'Category', 'Status', 'Current Inventory', 'Avg Daily Sales', 'DOS', 
-            'Reorder Point', 'Suggested Order Qty', 'Lead Time (days)', 
-            'Stock Cover (days)', 'MOQ', 'Target Stock Level'
+    hide_zero_rows = st.checkbox("Hide items with zero inventory AND zero average daily sales", value=True)
+
+    # Apply filters
+    filtered_overview_df = overview_df.copy()
+    if selected_category != 'All Categories':
+        filtered_overview_df = filtered_overview_df[filtered_overview_df['Category'] == selected_category]
+    if selected_status != 'All Statuses':
+        filtered_overview_df = filtered_overview_df[filtered_overview_df['Status'] == selected_status]
+
+
+    if hide_zero_rows:
+        # Keep rows where EITHER Current Inventory is NOT 0 OR Avg Daily Sales is NOT 0
+        filtered_overview_df = filtered_overview_df[
+            (filtered_overview_df['Current Inventory'] != 0) | 
+            (filtered_overview_df['Avg Daily Sales'] != 0)
         ]
-        display_df_final = display_df[[col for col in display_cols if col in display_df.columns]]
-        display_df_final['Order Qty Override'] = display_df_final['Suggested Order Qty']
 
-        st.info("You can edit the 'Order Qty Override' column. The table is sorted by status to show items needing attention first.")
+    # Add a "Select" column for adding to the plan
+    filtered_overview_df['Select'] = False
+    
+    # Define columns to display in the overview
+    overview_display_cols = ['Select', 'Image URL','MSKU', 'Category', 'Status', 'Current Inventory', 'Avg Daily Sales', 'DOS', 
+            'Reorder Point', 'Suggested Order Qty', 'Lead Time (days)', 
+            'Stock Cover (days)', 'Target Stock Level']
+    
+    # Use st.data_editor to make the "Select" column interactive
+    edited_overview_df = st.data_editor(
+        filtered_overview_df[overview_display_cols],
+        column_config={
+            "Select": st.column_config.CheckboxColumn(required=True),
+            "Image URL": st.column_config.ImageColumn("Image"),
+            "MSKU": st.column_config.TextColumn(disabled=True),
+            "Category": st.column_config.TextColumn(disabled=True),
+            "Status": st.column_config.TextColumn(disabled=True),
+            "Current Inventory": st.column_config.NumberColumn("Current Inv.", disabled=True),
+            "Avg Daily Sales": st.column_config.NumberColumn(format="%.2f", disabled=True),
+            "DOS": st.column_config.NumberColumn("Days of Stock", format="%.1f", disabled=True),
+            "Reorder Point": st.column_config.NumberColumn(disabled=True),
+            "Suggested Order Qty": st.column_config.NumberColumn(disabled=True),
+        },
+        hide_index=True, use_container_width=True, key="overview_editor"
+    )
 
-        edited_df = st.data_editor(
-            display_df_final.sort_values(by='Status', key=lambda col: col.map({
-                '🚨 Order Now': 0, 
-                '⚠️ Reorder Soon': 1, 
-                '✅ OK': 2, 
-                '📈 Overstocked': 3
-            })), # Custom sort order
-            column_config={
+    # --- "Add to Plan" Button Logic ---
+    selected_rows = edited_overview_df[edited_overview_df['Select']]
+    if st.button("Add Selected to Plan Draft", disabled=selected_rows.empty):
+        for index, row in selected_rows.iterrows():
+            # Check if MSKU is already in the draft
+            if row['MSKU'] not in st.session_state.replenishment_plan_draft_df['MSKU'].values:
+                new_item = {
+                    'MSKU': row['MSKU'],
+                    'Category': row['Category'],
+                    'HSN Code': overview_df[overview_df['MSKU'] == row['MSKU']].iloc[0].get('HSN Code', ''), # Get HSN from original df
+                    'Image URL': row['Image URL'],
+                    'Order Quantity': row['Suggested Order Qty'], # Pre-fill with suggested qty
+                    'Notes': '' # Add an empty notes field
+                }
+                # Convert to DataFrame to concatenate
+                new_item_df = pd.DataFrame([new_item])
+                st.session_state.replenishment_plan_draft_df = pd.concat(
+                    [st.session_state.replenishment_plan_draft_df, new_item_df],
+                    ignore_index=True
+                )
+        st.success(f"Added {len(selected_rows)} item(s) to the plan draft below.")
+        st.rerun()
 
-                "MSKU": st.column_config.TextColumn("MSKU", width="medium", disabled=True),
-                "Image URL": st.column_config.ImageColumn(
-                    "Image", # Header of the column
-                    width="small", # Options: "small", "medium", "large"
-                    help="Product Image"
-                ),
-                "Category": st.column_config.TextColumn("Category", width="medium", disabled=True),
-                "Status": st.column_config.TextColumn("Status", width="small", disabled=True),
-                "Current Inventory": st.column_config.NumberColumn("Current Inv.", format="%d", disabled=True),
-                "Avg Daily Sales": st.column_config.NumberColumn("Avg Daily Sales", format="%.2f", disabled=True),
-                "DOS": st.column_config.NumberColumn("Days of Stock", format="%.1f", disabled=True),
-                "Reorder Point": st.column_config.NumberColumn(format="%d", disabled=True),
-                "Suggested Order Qty": st.column_config.NumberColumn(format="%d", disabled=True),
-                "Order Qty Override": st.column_config.NumberColumn("Final Order Qty", min_value=0, step=10),
-                "Lead Time (days)": st.column_config.NumberColumn(format="%d", disabled=True),
-                "Stock Cover (days)": st.column_config.NumberColumn(format="%d", disabled=True),
-                "MOQ": st.column_config.NumberColumn(format="%d", disabled=True),
-                "Target Stock Level": st.column_config.NumberColumn(format="%d", disabled=True),
-            },
-            hide_index=True,
-            use_container_width=True,
-            key="replenishment_editor_final"
-        )
-        
-        st.divider()
-        st.subheader("Download Plan")
-        
-        # --- DOWNLOAD LOGIC ---
-        col_dl1, col_dl2 = st.columns(2)
-        
-        with col_dl1:
-            # --- FIX for CSV Download ---
-            # Create a clean version of the DataFrame for CSV export
-            csv_export_df = edited_df.copy()
-            # Remove the icon from the status column
-            csv_export_df['Status'] = csv_export_df['Status'].str.replace(r'[^\w\s]', '', regex=True).str.strip()
-            # The 'Image URL' column already contains the link, which is fine for CSV.
-            
-            st.download_button(
-                "Download as CSV",
-                csv_export_df.to_csv(index=False).encode('utf-8'),
-                f"replenishment_plan_{date.today().strftime('%Y%m%d')}.csv",
-                "text/csv",
-                key='download-replen-plan-csv',
-                use_container_width=True
-            )
+else:
+    st.info("Click 'Calculate Replenishment Overview' to begin.")
 
-        with col_dl2:
-            # --- NEW: PDF Download Button ---
-            if st.button("Generate & Download as PDF", key='generate-pdf-btn', use_container_width=True):
-                with st.spinner("Generating PDF... This may take a moment."):
-                    # We pass the `edited_df` to the generator so it includes user edits
-                    pdf_bytes = generate_replenishment_pdf(edited_df)
-                    if pdf_bytes:
-                        st.download_button(
-                            label="PDF Ready! Click to Download",
-                            data=pdf_bytes,
-                            file_name=f"replenishment_plan_{date.today().strftime('%Y%m%d')}.pdf",
-                            mime="application/pdf",
-                            key='download-replen-plan-pdf'
-                        )
-                    else:
-                        st.error("Failed to generate PDF. Check logs.")
-    else:
-        st.success("Calculation complete. No items currently require replenishment.")
+st.divider()
+
+# --- SECTION 2: REPLENISHMENT PLAN DRAFT ---
+st.header("Replenishment Plan Draft")
+draft_df = st.session_state.get('replenishment_plan_draft_df')
+
+if draft_df is not None and not draft_df.empty:
+    st.info("Edit the 'Order Quantity' and add 'Notes' as needed. This is the final plan to be ordered.")
+    
+    edited_draft_df = st.data_editor(
+        draft_df,
+        column_config={
+            "MSKU": st.column_config.TextColumn(disabled=True),
+            "Category": st.column_config.TextColumn(disabled=True),
+            "HSN Code": st.column_config.TextColumn(disabled=True),
+            "Image URL": st.column_config.ImageColumn("Image"),
+            "Order Quantity": st.column_config.NumberColumn(min_value=0, step=10, required=True),
+            "Notes": st.column_config.TextColumn(width="large")
+        },
+        num_rows="dynamic", # Allow deleting rows from the draft
+        hide_index=True, use_container_width=True, key="draft_editor"
+    )
+    
+    # Update session state with edits from the draft editor
+    st.session_state.replenishment_plan_draft_df = edited_draft_df
+
+    st.subheader("Download Plan Draft")
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        csv_export_df = edited_draft_df.copy()
+        st.download_button("Download as CSV", csv_export_df.to_csv(index=False).encode('utf-8'),
+                           f"replenishment_plan_draft_{date.today().strftime('%Y%m%d')}.csv", "text/csv",
+                           key='download-draft-csv', use_container_width=True)
+    with col_dl2:
+        if st.button("Generate & Download as PDF", key='generate-draft-pdf-btn', use_container_width=True):
+            with st.spinner("Generating PDF..."):
+                pdf_bytes = generate_replenishment_pdf(edited_draft_df)
+                if pdf_bytes:
+                    st.download_button(label="PDF Ready! Click to Download", data=pdf_bytes,
+                                       file_name=f"replenishment_plan_draft_{date.today().strftime('%Y%m%d')}.pdf",
+                                       mime="application/pdf", key='download-draft-pdf')
+                else: st.error("Failed to generate PDF.")
+else:
+    st.info("No items have been added to the replenishment plan draft yet. Select items from the overview above.")

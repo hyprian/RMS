@@ -72,13 +72,20 @@ if 'line_item_total_inr' not in st.session_state:
     st.session_state.line_item_total_inr = 0.0
 if 'line_item_currency' not in st.session_state: # New state for currency
     st.session_state.line_item_currency = "USD"
+if 'usd_to_inr_rate' not in st.session_state:
+    st.session_state.usd_to_inr_rate = 83.50 # Default value
+if 'cny_to_inr_rate' not in st.session_state:
+    st.session_state.cny_to_inr_rate = 11.50
 
 # --- Callback Functions ---
 def update_line_item_details():
     selected_msku = st.session_state.line_item_msku
     cost_details = get_msku_cost_details(all_category_df, selected_msku)
-    # For now, we assume the cost in the table is USD. This could be enhanced later.
-    st.session_state.line_item_price_foreign = float(cost_details.get('usd_cost', 0.0))
+    # Update price based on selected currency
+    if st.session_state.line_item_currency == "INR":
+        st.session_state.line_item_price_foreign = float(cost_details.get('inr_cost', 0.0))
+    else: # Default to USD cost for USD or CNY
+        st.session_state.line_item_price_foreign = float(cost_details.get('usd_cost', 0.0))
 
 def add_item_to_draft():
     msku = st.session_state.line_item_msku
@@ -86,27 +93,32 @@ def add_item_to_draft():
         st.warning("Please select an MSKU before adding."); return
     
     msku_details = get_msku_details(all_category_df, msku)
-    total_foreign_amt = float(st.session_state.line_item_qty) * float(st.session_state.line_item_price_foreign)
     
+    qty = st.session_state.line_item_qty
+    price_foreign = st.session_state.line_item_price_foreign
+    total_foreign_amt = float(qty) * float(price_foreign)
+    currency = st.session_state.line_item_currency
+    
+    # Determine INR amount
+    if currency == "INR":
+        total_inr = total_foreign_amt # In this case, foreign amount is INR
+    else:
+        total_inr = st.session_state.line_item_total_inr # Use the value from the (possibly edited) input box
+
     new_item = {
-        "MSKU": msku,
-        "Category": msku_details.get('Category', ''),
-        "Quantity": st.session_state.line_item_qty,
-        "Currency": st.session_state.line_item_currency, # Add currency to draft
-        "Price/pcs": st.session_state.line_item_price_foreign, # Generic name
-        "Foreign Currency Amt": total_foreign_amt, # Generic name
-        "INR Amt": st.session_state.line_item_total_inr,
+        "MSKU": msku, "Category": msku_details.get('Category', ''), "Quantity": qty,
+        "Currency": currency, "Price/pcs": price_foreign,
+        "Foreign Currency Amt": total_foreign_amt, "INR Amt": total_inr,
         "HSN Code": msku_details.get('HSN Code', '')
     }
     st.session_state.po_draft_items.append(new_item)
-    st.success(f"Added {st.session_state.line_item_qty} x {msku} to the draft.")
+    st.success(f"Added {qty} x {msku} to the draft.")
     
     # Reset form fields
     st.session_state.line_item_msku = ""
     st.session_state.line_item_qty = 1
     st.session_state.line_item_price_foreign = 0.0
     st.session_state.line_item_total_inr = 0.0
-    # Do not reset currency, user might be adding multiple items in the same currency
 
 # --- Form UI ---
 st.header("1. PO Header Information")
@@ -138,6 +150,12 @@ with st.container(border=True):
 
 st.divider()
 st.header("2. Add Line Items")
+
+# --- NEW: Conversion Rate Inputs ---
+st.sidebar.header("Currency Conversion")
+st.sidebar.number_input("USD to INR Rate", key="usd_to_inr_rate", min_value=0.0, format="%.2f")
+st.sidebar.number_input("CNY to INR Rate", key="cny_to_inr_rate", min_value=0.0, format="%.2f")
+
 with st.container(border=True):
     msku_options = [""] + (sorted(all_category_df['MSKU'].unique()) if all_category_df is not None and not all_category_df.empty else [])
     
@@ -157,22 +175,39 @@ with st.container(border=True):
     with calc_col1:
         st.number_input("Quantity", min_value=1, value=1, step=1, key="line_item_qty")
     with calc_col2:
-        # Currency selector
-        st.radio("Currency", options=["USD", "CNY"], key="line_item_currency", horizontal=True)
+        st.radio("Currency", options=["USD", "CNY", "INR"], key="line_item_currency", horizontal=True, on_change=update_line_item_details)
+    
+    currency = st.session_state.line_item_currency
+    currency_symbol = {"USD": "$", "CNY": "¥", "INR": "₹"}.get(currency, "")
+    
     with calc_col3:
-        # Price per piece in selected currency
-        currency_symbol = "$" if st.session_state.line_item_currency == "USD" else "¥"
-        st.number_input(f"Price/pcs ({st.session_state.line_item_currency})", min_value=0.0, format="%.4f", key="line_item_price_foreign")
+        st.number_input(f"Price/pcs ({currency})", min_value=0.0, format="%.4f", key="line_item_price_foreign")
     
     total_foreign_amt = float(st.session_state.line_item_qty) * float(st.session_state.line_item_price_foreign)
     with calc_col4:
-        st.metric(f"Total {st.session_state.line_item_currency} Amt", f"{currency_symbol}{total_foreign_amt:,.2f}")
+        st.metric(f"Total {currency} Amt", f"{currency_symbol}{total_foreign_amt:,.2f}")
+    
+    # Auto-calculate INR value
+    calculated_inr = 0.0
+    if currency == "USD":
+        calculated_inr = total_foreign_amt * st.session_state.usd_to_inr_rate
+    elif currency == "CNY":
+        calculated_inr = total_foreign_amt * st.session_state.cny_to_inr_rate
+    elif currency == "INR":
+        calculated_inr = total_foreign_amt # In this case, the "foreign" amount is INR
+
     with calc_col5:
-        st.number_input("Total INR Amt", min_value=0.0, format="%.2f", key="line_item_total_inr")
+        st.number_input(
+            "Total INR Amt", 
+            min_value=0.0, 
+            value=calculated_inr, # Set the calculated value as the default
+            format="%.2f", 
+            key="line_item_total_inr",
+            disabled=(currency == "INR") # Disable if currency is INR
+        )
 
     st.button("Add Item to PO Draft", on_click=add_item_to_draft, use_container_width=True)
-    # --- END MODIFIED SECTION ---
-
+    
 st.divider()
 st.header("3. PO Draft")
 if st.session_state.po_draft_items:
