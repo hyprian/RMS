@@ -183,6 +183,7 @@ if draft_df is not None and not draft_df.empty:
     # Get vendor options for the dropdown
     vendor_options = [""] + get_distinct_values(all_pos_df, 'Vendor Name')
     
+# Draft table display
     edited_draft_df = st.data_editor(
         draft_df,
         column_config={
@@ -192,13 +193,24 @@ if draft_df is not None and not draft_df.empty:
             "Image URL": st.column_config.ImageColumn("Image"),
             "Order Quantity": st.column_config.NumberColumn(min_value=0, step=10, required=True),
             "Notes": st.column_config.TextColumn(width="large"),
-            # --- NEW: Supplier and Cost columns ---
             "Vendor Name": st.column_config.SelectboxColumn(options=vendor_options, required=True),
             "Unit Cost": st.column_config.NumberColumn(min_value=0.0, format="%.4f", required=True),
             "Currency": st.column_config.SelectboxColumn(options=["USD", "CNY", "INR"], required=True)
         },
-        hide_index=True, use_container_width=True, key="draft_editor"
+        hide_index=True,
+        use_container_width=True,
+        key="draft_editor",
+        num_rows=""
     )
+
+    # Add an explicit "Save Changes" button
+    if st.button("Save Draft Changes"):
+        st.session_state.replenishment_plan_draft_df = edited_draft_df
+        st.success("Draft updated successfully.")
+
+    # Optional: Warn users to click Save
+    st.caption("ℹ️ Make sure to click **'Save Draft Changes'** after editing to avoid losing your inputs.")
+
     
     st.session_state.replenishment_plan_draft_df = edited_draft_df
 
@@ -225,15 +237,18 @@ if draft_df is not None and not draft_df.empty:
                     
                     items_list.append({
                         "MSKU": item_row['MSKU'],
+                        "Vendor Name": item_row['Vendor Name'],
+                        "Forwarder": "",  # Default to blank, user will select on PO page
+                        "Shipment Route": "Air", # Default to "Air"
+                        "Arrive by": date.today() + timedelta(days=45), # Default to 45 days from now
                         "Category": item_row['Category'],
                         "Quantity": qty,
                         "Currency": currency,
-                        "per pcs price usd": price, # This key is used on the Create PO page
-                        "USD Amt": total_foreign_amt, # This key is used on the Create PO page
-                        "INR Amt": 0.0, # User will calculate/input this on the Create PO page
-                        "HSN Code": item_row['HSN Code'],
-                        "Vendor Name": item_row['Vendor Name'] # Pass the vendor name
-                    })
+                        "per pcs price usd": price,
+                        "USD Amt": total_foreign_amt,
+                        "INR Amt": 0.0, # This will be recalculated on the PO page
+                        "HSN Code": item_row['HSN Code']
+                    },)
 
                 # Append these items to the main PO draft state
                 st.session_state.po_draft_items.extend(items_list)
