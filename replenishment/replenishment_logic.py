@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 def calculate_replenishment_data(
     inventory_df: pd.DataFrame, 
     sales_velocity_df: pd.Series, 
+    open_po_data_df: pd.DataFrame,
     lead_times_map: dict, 
     stock_cover_days_map: dict,
     order_cycle_days_map: dict,
@@ -34,6 +35,17 @@ def calculate_replenishment_data(
     
     # --- FIX: Reassign the result of fillna ---
     replen_df['Current Inventory'] = replen_df['Current Inventory'].fillna(0)
+
+    if open_po_data_df is not None and not open_po_data_df.empty:
+        # Set MSKU as index for easy mapping
+        open_po_data_df = open_po_data_df.set_index('MSKU')
+        replen_df['On Order Quantity'] = replen_df.index.map(open_po_data_df['On_Order_Quantity'])
+        replen_df['PO Details'] = replen_df.index.map(open_po_data_df['PO_Details'])
+    
+    # Fill NaNs for MSKUs with no open POs
+    replen_df['On Order Quantity'].fillna(0, inplace=True)
+    replen_df['PO Details'].fillna(pd.Series([[] for _ in range(len(replen_df))]), inplace=True) # Fill with empty lists
+    # --- END NEW ---
 
     # ... (Mapping parameters remains the same) ...
     default_lead_time = lead_times_map.get('default', 30)
