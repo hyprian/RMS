@@ -6,7 +6,7 @@ import json
 # Use the exact credentials you tested with curl
 BASEROW_URL = "https://api.baserow.io"
 API_TOKEN = "7AB494siWdT7we5b09jyVVBpIh8nsg5t"
-TABLE_ID = 616271 # The problematic table ID
+TABLE_ID = 616396 # The problematic table ID
 
 # --- TEST FUNCTION ---
 def test_fetch_rows(table_id):
