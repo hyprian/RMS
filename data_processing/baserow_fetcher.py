@@ -244,64 +244,56 @@ class BaserowFetcher:
     
     def get_existing_sales_date_ranges(self, processed_sales_table_id):
         """
-        Fetches MIN and MAX Sale Date for each Platform-Account combination
-        from the Processed Sales Data table.
+        Fetches MIN and MAX Sale Date for each Platform-Account combination.
         """
         logger.info(f"Fetching existing sales date ranges from table {processed_sales_table_id}")
         if not processed_sales_table_id:
-            logger.error("Processed sales table ID not provided.")
             return {}
 
         try:
-            all_sales_records_df = self.get_table_data_as_dataframe(
-                processed_sales_table_id,
-                # No need to specify required_columns here if get_table_data_as_dataframe fetches all
-                # or if the columns we need are standard.
-            )
+            all_sales_records_df = self.get_table_data_as_dataframe(processed_sales_table_id)
 
-            if all_sales_records_df is None or all_sales_records_df.empty: # Check for None as well
-                logger.warning("No data fetched from processed sales table to determine date ranges.")
+            all_sales_records_df['Sale Date'] = all_sales_records_df['Sale Date'].astype(str).str.strip()
+            all_sales_records_df['parsed_date'] = pd.to_datetime(all_sales_records_df['Sale Date'], errors='coerce')
+
+            if all_sales_records_df is None or all_sales_records_df.empty:
                 return {}
 
-            required_cols_for_range_check = {'Platform', 'Account Name', 'Sale Date'}
-            # Check if all required columns are present in the DataFrame
-            if not required_cols_for_range_check.issubset(all_sales_records_df.columns):
-                missing = required_cols_for_range_check - set(all_sales_records_df.columns)
-                logger.warning(f"Missing required columns ({missing}) in processed sales table to determine date ranges. Available: {all_sales_records_df.columns.tolist()}")
+            required_cols = {'Platform', 'Account Name', 'Sale Date'}
+            if not required_cols.issubset(all_sales_records_df.columns):
+                missing = required_cols - set(all_sales_records_df.columns)
+                logger.error(f"Date Range Check: Missing required columns {missing}.")
                 return {}
 
-            all_sales_records_df['Sale Date'] = pd.to_datetime(all_sales_records_df['Sale Date'], errors='coerce')
-            all_sales_records_df.dropna(subset=['Sale Date'], inplace=True)
+            # --- ROBUST DATE PARSING AND DEBUGGING ---
+            logger.debug(f"Date Range Check: Raw 'Sale Date' dtypes:\n{all_sales_records_df[['Platform', 'Sale Date']].head(10)}")
+            
+            # Attempt to convert to datetime, coercing errors
+            all_sales_records_df['parsed_date'] = pd.to_datetime(all_sales_records_df['Sale Date'], errors='coerce')
+            
+            # Find out which rows failed to parse
+            failed_parsing = all_sales_records_df[all_sales_records_df['parsed_date'].isna()]
+            if not failed_parsing.empty:
+                logger.warning(f"Date Range Check: Failed to parse dates for {len(failed_parsing)} rows. Sample of failed rows:")
+                logger.warning(f"\n{failed_parsing[['Platform', 'Account Name', 'Sale Date']].head().to_string()}")
+
+            # Drop rows where date could not be parsed at all
+            all_sales_records_df.dropna(subset=['parsed_date'], inplace=True)
 
             if all_sales_records_df.empty:
-                logger.warning("No valid Sale Date entries found after conversion and NA drop.")
+                logger.warning("Date Range Check: No valid date entries found after parsing all records.")
                 return {}
+            # --- END ROBUST DATE PARSING ---
 
-            all_sales_records_df['Platform'] = all_sales_records_df['Platform'].astype(str)
-            all_sales_records_df['Account Name'] = all_sales_records_df['Account Name'].astype(str)
+            all_sales_records_df['Platform'] = all_sales_records_df['Platform'].fillna('Unknown Platform').astype(str)
+            all_sales_records_df['Account Name'] = all_sales_records_df['Account Name'].fillna('Unknown Account').astype(str)
 
-            date_ranges = all_sales_records_df.groupby(['Platform', 'Account Name'])['Sale Date'].agg(['min', 'max'])
+            # Use the newly parsed date column for aggregation
+            date_ranges = all_sales_records_df.groupby(['Platform', 'Account Name'])['parsed_date'].agg(['min', 'max'])
             
             result = {}
             for index, row in date_ranges.iterrows():
-                # index can be a tuple (Platform, Account Name) or a single value if only one grouping col
-                if isinstance(index, tuple) and len(index) == 2:
-                    platform, account = index
-                elif not isinstance(index, tuple) and len(date_ranges.index.names) == 1 and date_ranges.index.name == 'Platform': # Or Account Name
-                    # Handle cases where groupby might only have one effective grouping column if the other is all same/NaN
-                    # This part might need adjustment based on how groupby behaves with your actual data
-                    platform = index if date_ranges.index.name == 'Platform' else "Unknown"
-                    account = index if date_ranges.index.name == 'Account Name' else "Unknown"
-                    if date_ranges.index.name == 'Platform': # If grouped by Platform, assume a single account or aggregate
-                         account = all_sales_records_df['Account Name'].unique()[0] if len(all_sales_records_df['Account Name'].unique()) == 1 else "Multiple/Aggregated"
-                    elif date_ranges.index.name == 'Account Name':
-                         platform = all_sales_records_df['Platform'].unique()[0] if len(all_sales_records_df['Platform'].unique()) == 1 else "Multiple/Aggregated"
-
-                else: # Fallback or error for unexpected index structure
-                    logger.warning(f"Unexpected index structure from groupby: {index}")
-                    continue
-
-
+                platform, account = index
                 if platform not in result:
                     result[platform] = {}
                 result[platform][account] = {
