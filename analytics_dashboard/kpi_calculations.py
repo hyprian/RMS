@@ -146,3 +146,33 @@ def calculate_sales_velocity(daily_sales_df: pd.DataFrame, days_period: int) -> 
     
     logger.info(f"KPI_CALC: Calculated sales velocity for {len(avg_daily_sales)} MSKUs over {days_period} days.")
     return avg_daily_sales
+
+def calculate_profit_data(daily_sales_df: pd.DataFrame, inventory_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merges sales data with inventory (cost) data and calculates profit metrics.
+    
+    Returns:
+        pd.DataFrame: The daily sales DataFrame with added 'Cost', 'Total COGS', and 'Gross Profit' columns.
+    """
+    if daily_sales_df is None or daily_sales_df.empty:
+        return pd.DataFrame()
+    if inventory_df is None or inventory_df.empty or 'MSKU' not in inventory_df.columns or 'Cost' not in inventory_df.columns:
+        logger.warning("KPI_CALC: Profit calculation skipped. Inventory data or 'Cost' column is missing.")
+        # Return the original df with blank profit columns
+        daily_sales_df['Total COGS'] = 0
+        daily_sales_df['Gross Profit'] = daily_sales_df['Net Revenue']
+        return daily_sales_df
+
+    # Select only the necessary columns from inventory to merge
+    cost_data = inventory_df[['MSKU', 'Cost']].copy()
+    
+    # Merge sales data with cost data
+    profit_df = pd.merge(daily_sales_df, cost_data, on='MSKU', how='left')
+    profit_df['Cost'].fillna(0, inplace=True) # If an MSKU has sales but no cost in inventory, assume 0 cost
+
+    # Calculate profit metrics
+    profit_df['Total COGS'] = profit_df['Quantity Sold'] * profit_df['Cost']
+    profit_df['Gross Profit'] = profit_df['Net Revenue'] - profit_df['Total COGS']
+    
+    logger.info(f"KPI_CALC: Successfully calculated profit data for {len(profit_df)} records.")
+    return profit_df

@@ -37,17 +37,20 @@ if not fetcher: st.error("Failed to initialize Baserow connection."); st.stop()
 
 po_table_id = APP_CONFIG['baserow'].get('purchase_orders_table_id')
 category_table_id = APP_CONFIG['baserow'].get('category_table_id')
-if not po_table_id or not category_table_id:
-    st.error("`purchase_orders_table_id` and `category_table_id` must be configured in settings.yaml.")
+packaging_inv_table_id = APP_CONFIG['baserow'].get('packaging_inventory_table_id')
+if not all([po_table_id, category_table_id, packaging_inv_table_id]):
+    st.error("`purchase_orders_table_id`, `category_table_id`, and `packaging_inventory_table_id` must be configured.")
     st.stop()
 
 if 'po_all_pos_df' not in st.session_state:
     st.session_state.po_all_pos_df = get_all_pos(fetcher, po_table_id)
-if 'analytics_category_df' not in st.session_state:
-    load_and_cache_analytics_data(fetcher, None, None, category_table_id, None)
+if 'analytics_category_df' not in st.session_state or 'packaging_inventory_df' not in st.session_state:
+    load_and_cache_analytics_data(fetcher, None, None, category_table_id, None, None, packaging_inv_table_id)
 
 all_pos_df = st.session_state.get('po_all_pos_df', pd.DataFrame())
 all_category_df = st.session_state.get('analytics_category_df', pd.DataFrame())
+all_packaging_inv_df = st.session_state.get('packaging_inventory_df', pd.DataFrame())
+
 
 # --- Initialize Session State ---
 if 'po_draft_items' not in st.session_state:
@@ -102,15 +105,28 @@ def update_line_item_details():
         st.session_state.line_item_price_foreign = float(cost_details.get('usd_cost', 0.0))
 
 def add_item_to_draft():
-    msku = st.session_state.line_item_msku
+    item_type = st.session_state.line_item_type
+
+    # msku = st.session_state.line_item_msku
+    if item_type == "Product (MSKU)":
+        identifier = st.session_state.line_item_msku
+        if not identifier: st.warning("Please select an MSKU."); return
+        msku_details = get_msku_details(all_category_df, identifier)
+        category = msku_details.get('Category', '')
+        hsn_code = msku_details.get('HSN Code', '')
+    else: # Packaging Material
+        identifier = st.session_state.line_item_material
+        if not identifier: st.warning("Please select a Packaging Material."); return
+        category = "Packaging Material"
+        hsn_code = ""
     vendor = st.session_state.line_item_vendor_text if st.session_state.line_item_vendor_select == "" else st.session_state.line_item_vendor_select
     forwarder = st.session_state.line_item_forwarder_text if st.session_state.line_item_forwarder_select == "" else st.session_state.line_item_forwarder_select
     shipment_route = st.session_state.line_item_shipment_route
     arrive_by_date = st.session_state.line_item_arrive_by
-    if not msku: st.warning("Please select an MSKU."); return
+    # if not msku: st.warning("Please select an MSKU."); return
     if not vendor: st.warning("Please select or enter a Vendor Name."); return
     
-    msku_details = get_msku_details(all_category_df, msku)
+    # msku_details = get_msku_details(all_category_df, msku)
     qty = st.session_state.line_item_qty
     price = st.session_state.line_item_price_foreign
     currency = st.session_state.line_item_currency
@@ -119,15 +135,16 @@ def add_item_to_draft():
     if currency == "INR": total_inr = total_foreign
 
     new_item = {
-        "MSKU": msku, "Vendor Name": vendor, "Forwarder": forwarder,
+        "MSKU": identifier, "Vendor Name": vendor, "Forwarder": forwarder,
         "Shipment Route": shipment_route, "Arrive by": arrive_by_date,
-        "Category": msku_details.get('Category', ''), "Quantity": qty,
+        "Category": category, "Quantity": qty,
         "Currency": currency, "per pcs price usd": price,
-        "USD Amt": total_foreign, "INR Amt": total_inr, "HSN Code": msku_details.get('HSN Code', '')
+        "USD Amt": total_foreign, "INR Amt": total_inr, "HSN Code": hsn_code
     }
     st.session_state.po_draft_items.append(new_item)
-    st.success(f"Added {qty} x {msku} to the draft.")
+    st.success(f"Added {qty} x {identifier} to the draft.")
     st.session_state.line_item_msku = ""; st.session_state.line_item_qty = 1
+    st.session_state.line_item_material = ""
     st.session_state.line_item_price_foreign = 0.0; st.session_state.line_item_total_inr = 0.0
 
 if not st.session_state.po_header_initialized:
@@ -185,14 +202,31 @@ st.sidebar.number_input("USD to INR Rate", key="usd_to_inr_rate", min_value=0.0,
 st.sidebar.number_input("CNY to INR Rate", key="cny_to_inr_rate", min_value=0.0, format="%.2f")
 
 with st.container(border=True):
+
+    # --- NEW: Item Type Selector ---
+    st.radio(
+        "Select Item Type to Add:",
+        options=["Product (MSKU)", "Packaging Material"],
+        key="line_item_type",
+        horizontal=True
+    )
     msku_options = [""] + (sorted(all_category_df['MSKU'].unique()) if all_category_df is not None and not all_category_df.empty else [])
+    material_options = [""] + (sorted(all_packaging_inv_df['Material Name'].unique()) if all_packaging_inv_df is not None and not all_packaging_inv_df.empty else [])
     vendor_options = [""] + get_distinct_values(all_pos_df, 'Vendor Name')
     forwarder_options = [""] + get_distinct_values(all_pos_df, 'Forwarder')
-    item_col1, item_col2, item_col3 = st.columns([3, 2, 2])
-    with item_col1: st.selectbox("Select MSKU", options=msku_options, key="line_item_msku", on_change=update_line_item_details)
-    msku_details = get_msku_details(all_category_df, st.session_state.line_item_msku)
-    with item_col2: st.text_input("Category", value=msku_details.get('Category', ''), disabled=True, key="line_item_category_display")
-    with item_col3: st.text_input("HSN Code", value=msku_details.get('HSN Code', ''), disabled=True, key="line_item_hsn_display")
+    if st.session_state.line_item_type == "Product (MSKU)":
+        item_col1, item_col2, item_col3 = st.columns([3, 2, 2])
+        with item_col1: st.selectbox("Select MSKU", options=msku_options, key="line_item_msku", on_change=update_line_item_details)
+        msku_details = get_msku_details(all_category_df, st.session_state.line_item_msku)
+        with item_col2: st.text_input("Category", value=msku_details.get('Category', ''), disabled=True, key="line_item_category_display")
+        with item_col3: st.text_input("HSN Code", value=msku_details.get('HSN Code', ''), disabled=True, key="line_item_hsn_display")
+        item_colA, item_colB = st.columns(2)
+    else: # Packaging Material
+        item_col1, item_col2 = st.columns([3, 2])
+        with item_col1:
+            st.selectbox("Select Packaging Material", options=material_options, key="line_item_material")
+        with item_col2:
+            st.text_input("Category", value="Packaging Material", disabled=True)
     item_colA, item_colB = st.columns(2)
     with item_colA:
         st.selectbox("Vendor Name", options=vendor_options, key="line_item_vendor_select")
@@ -234,35 +268,10 @@ if st.session_state.po_draft_items:
         recalculated_items.append(item)
     draft_df_recalculated = pd.DataFrame(recalculated_items)
     
-    # edited_po_draft_df = st.data_editor(
-    #     draft_df_recalculated,
-    #     column_config={
-    #         "MSKU": st.column_config.TextColumn(disabled=True),
-    #         "Vendor Name": st.column_config.SelectboxColumn(options=vendor_options, required=True),
-    #         "Forwarder": st.column_config.SelectboxColumn(options=forwarder_options, required=False),
-    #         "Shipment Route": st.column_config.SelectboxColumn(options=["Air", "Sea"], required=True),
-    #         "Arrive by": st.column_config.DateColumn(format="DD-MMM-YYYY", required=True),
-    #         "Category": st.column_config.TextColumn(disabled=True),
-    #         "Quantity": st.column_config.NumberColumn(required=True),
-    #         "Currency": st.column_config.SelectboxColumn(options=["USD", "CNY", "INR"], required=True),
-    #         "per pcs price usd": st.column_config.NumberColumn("Price/pcs", format="%.4f", required=True),
-    #         "USD Amt": st.column_config.NumberColumn("Total Foreign Amt", format="%.2f", disabled=True),
-    #         "INR Amt": st.column_config.NumberColumn("Total INR Amt", format="%.2f", required=True),
-    #         "HSN Code": st.column_config.TextColumn(disabled=True),
-    #     },
-    #     hide_index=True, use_container_width=True, key="final_po_draft_editor", num_rows="dynamic"
-    # )
-    # st.session_state.po_draft_items = edited_po_draft_df.to_dict('records')
-    
-    # total_draft_value_inr = edited_po_draft_df['INR Amt'].sum()
-    # st.metric("Total Draft Value", f"₹{total_draft_value_inr:,.2f}")
-    # if st.button("Clear Draft Items", key="clear_draft"):
-    #     st.session_state.po_draft_items = []
-    #     st.rerun()
     edited_po_draft_df = st.data_editor(
     draft_df_recalculated,
     column_config={
-        "MSKU": st.column_config.TextColumn(disabled=True),
+        "MSKU": st.column_config.TextColumn("Product/Material", disabled=True),
         "Vendor Name": st.column_config.SelectboxColumn(options=vendor_options, required=True),
         "Forwarder": st.column_config.SelectboxColumn(options=forwarder_options, required=False),
         "Shipment Route": st.column_config.SelectboxColumn(options=["Air", "Sea"], required=True),

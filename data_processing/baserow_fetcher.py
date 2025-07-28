@@ -186,7 +186,7 @@ class BaserowFetcher:
             
         # The only required column from Baserow is 'msku' plus at least one warehouse column.
         # We will fetch all warehouse columns plus 'msku'.
-        baserow_inventory_cols = ['msku'] + warehouse_columns
+        baserow_inventory_cols = ['msku' , 'Product Name', 'Cost'] + warehouse_columns
         
         # We don't need a target_col_mapping here, as we'll be creating 'Current Inventory' ourselves.
         df = self.get_table_data_as_dataframe(
@@ -196,7 +196,7 @@ class BaserowFetcher:
         
         if df.empty:
             logger.warning(f"No inventory data fetched or table {table_id} was empty after processing.")
-            return pd.DataFrame(columns=['MSKU', 'Current Inventory']) # Return a minimal empty DataFrame
+            return pd.DataFrame(columns=['MSKU', 'Product Name', 'Cost', 'Current Inventory']) # Return a minimal empty DataFrame
 
         # --- MODIFICATION: Aggregate stock from all warehouse columns ---
         # Ensure all warehouse columns exist, fill missing ones with 0
@@ -218,10 +218,12 @@ class BaserowFetcher:
 
         # Clean 'MSKU' and ensure 'Current Inventory' is an integer
         df['MSKU'] = df['MSKU'].astype(str).fillna('').str.strip()
+        df['Product Name'] = df['Product Name'].astype(str).fillna('N/A').str.strip()
+        df['Cost'] = pd.to_numeric(df['Cost'], errors='coerce').fillna(0)
         df['Current Inventory'] = df['Current Inventory'].astype(int)
 
         # Select the final columns we need for the app. We don't need the individual warehouse columns anymore.
-        final_inventory_cols = ['MSKU', 'Current Inventory']
+        final_inventory_cols = ['MSKU','Product Name', 'Cost', 'Current Inventory']
         df = df[final_inventory_cols]
 
         # Drop rows where MSKU is empty after cleaning
@@ -236,7 +238,9 @@ class BaserowFetcher:
                 logger.warning(f"Duplicate 'MSKU' entries found in inventory data for table {table_id}. Aggregating inventory for duplicates.")
                 # If duplicates exist, sum their 'Current Inventory'.
                 df = df.groupby('MSKU', as_index=False).agg({
-                    'Current Inventory': 'sum'
+                    'Current Inventory': 'sum',
+                     'Cost': 'first', # Assuming cost is the same for duplicate MSKUs
+                     'Product Name': 'first' # Assuming product name is the same for duplicate MSKUs
                 })
                 logger.info(f"Aggregated duplicate MSKUs. Inventory records after aggregation: {len(df)}.")
 
