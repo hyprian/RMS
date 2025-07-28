@@ -50,33 +50,53 @@ all_pos_df = st.session_state.get('grn_all_pos_df')
 if all_pos_df is None or all_pos_df.empty:
     st.info("No Purchase Orders found in Baserow."); st.stop()
 
-# --- UI for PO Selection ---
-st.header("1. Select Purchase Order to Receive")
+# --- UI for PO & Vendor Selection ---
+st.header("1. Select Purchase Order and Vendor to Receive")
 
-# Filter for POs that are not yet fully completed or cancelled
-actionable_statuses = ["Dispatched", "In Transit", "Received", "On Hold", "In-Process"]
+# Filter for POs that are not yet fully completed
 open_pos_df = all_pos_df[all_pos_df['GRN Status'] != 'GRN Completed']
 po_numbers = [""] + sorted(open_pos_df['Po No.'].unique().tolist())
 
-selected_po_number = st.selectbox(
-    "Select an open Purchase Order:",
-    options=po_numbers,
-    key="grn_po_select"
-)
+col1, col2 = st.columns(2)
+with col1:
+    selected_po_number = st.selectbox(
+        "Select an open Purchase Order:",
+        options=po_numbers,
+        key="grn_po_select"
+    )
 
-if not selected_po_number:
-    st.info("Select a PO to begin the GRN process."); st.stop()
+# --- NEW: Dynamic Vendor Selection ---
+vendor_options = [""]
+if selected_po_number:
+    # Find all vendors associated with the selected PO number
+    vendors_in_po = open_pos_df[open_pos_df['Po No.'] == selected_po_number]['Vendor Name'].unique().tolist()
+    vendor_options = [""] + sorted(vendors_in_po)
 
-# --- Display and Edit Line Items for Selected PO ---
-st.header(f"2. Enter Received Quantities for PO #{selected_po_number}")
+with col2:
+    selected_vendor = st.selectbox(
+        "Select Vendor for this GRN:",
+        options=vendor_options,
+        key="grn_vendor_select",
+        disabled=(not selected_po_number)
+    )
+# --- END NEW ---
 
-po_line_items_df = get_po_details(all_pos_df, selected_po_number)
+if not selected_po_number or not selected_vendor:
+    st.info("Select a PO and a Vendor to begin the GRN process."); st.stop()
 
-# st.warning("Debugging: Columns available in `po_line_items_df` are:")
-# st.write(po_line_items_df.columns.tolist())
+# --- Display and Edit Line Items for Selected PO and Vendor ---
+st.header(f"2. Enter Received Quantities for PO #{selected_po_number} from Vendor: {selected_vendor}")
 
-# Initialize the editor state if it doesn't exist or if the PO changes
-if 'grn_editor_df' not in st.session_state or st.session_state.get('grn_current_po') != selected_po_number:
+# Filter the line items for the selected PO AND Vendor
+po_line_items_df = all_pos_df[
+    (all_pos_df['Po No.'] == selected_po_number) & 
+    (all_pos_df['Vendor Name'] == selected_vendor)
+]
+
+# Unique key for session state based on PO and Vendor
+session_key_suffix = f"{selected_po_number}_{selected_vendor}".replace(" ", "_")
+
+if 'grn_editor_df' not in st.session_state or st.session_state.get('grn_current_key') != session_key_suffix:
     df_for_editor = po_line_items_df[['id', 'Msku Code', 'Category', 'Quantity']].copy()
     df_for_editor.rename(columns={'Quantity': 'Qty Ordered'}, inplace=True)
     
@@ -86,7 +106,7 @@ if 'grn_editor_df' not in st.session_state or st.session_state.get('grn_current_
     df_for_editor['Extra'] = 0
     
     st.session_state.grn_editor_df = df_for_editor
-    st.session_state.grn_current_po = selected_po_number
+    st.session_state.grn_current_key = session_key_suffix
 
 # Use st.data_editor for GRN input
 edited_grn_df = st.data_editor(
@@ -103,17 +123,17 @@ edited_grn_df = st.data_editor(
     },
     hide_index=True,
     use_container_width=True,
-    key=f"grn_editor_{selected_po_number}"
+    key=f"grn_editor_{session_key_suffix}"
 )
 
 # --- Final GRN Details and Submission ---
 st.divider()
 st.header("3. Finalize GRN")
 
-col1, col2 = st.columns(2)
-with col1:
+col_final1, col_final2 = st.columns(2)
+with col_final1:
     qc_date = st.date_input("Date of QC", value=date.today())
-with col2:
+with col_final2:
     final_grn_status = st.selectbox(
         "Set GRN Status for these items:",
         options=["In-Process", "GRN Completed", "On Hold", "Pending"]
@@ -128,15 +148,13 @@ if st.button("Submit GRN to Baserow", type="primary"):
         for index, row in edited_grn_df.iterrows():
             row_id = row['id']
             
-            # Prepare the data dictionary with only the fields to update
             update_data = {
                 "Actual Qty Received": str(row['Actual Qty Received']),
                 "Damage/Dust": str(row['Damage/Dust']),
                 "Missing": str(row['Missing']),
                 "Extra": str(row['Extra']),
-                "Date Of Qc": qc_date.strftime('%d-%b-%Y'), # Use the correct format
+                "Date Of Qc": qc_date.strftime('%d-%b-%Y'),
                 "GRN Status": final_grn_status
-                # We are NOT updating "Actual Receiving Date" here
             }
             
             if update_po_line_item(fetcher, po_table_id, row_id, update_data):
@@ -149,7 +167,7 @@ if st.button("Submit GRN to Baserow", type="primary"):
             st.balloons()
             st.session_state.pop('grn_all_pos_df', None)
             st.session_state.pop('grn_editor_df', None)
-            st.session_state.pop('grn_current_po', None)
+            st.session_state.pop('grn_current_key', None)
             st.rerun()
         else:
             st.error("Some items failed to update. Please check the logs and Baserow.")
