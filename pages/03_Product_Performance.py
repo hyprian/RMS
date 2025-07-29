@@ -4,30 +4,32 @@ import pandas as pd
 from datetime import datetime, timedelta, date
 import os
 import sys
+import numpy as np
 
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path: sys.path.insert(0, project_root)
 
 from utils.config_loader import APP_CONFIG
 from data_processing.baserow_fetcher import BaserowFetcher
-from analytics_dashboard.data_loader import load_and_cache_analytics_data # NEW
+from analytics_dashboard.data_loader import load_and_cache_analytics_data
 from analytics_dashboard.kpi_calculations import (
-    process_sales_data_for_analytics as get_sales_data, # Use the new name
+    process_sales_data_for_analytics as get_sales_data,
     calculate_total_sales_kpis,
-    get_sales_trend_data
+    get_sales_trend_data,
+    calculate_profit_data,
+    calculate_total_profit_kpis
 )
-from analytics_dashboard.charts import create_sales_trend_chart, create_pie_chart
-import logging
+from analytics_dashboard.charts import create_sales_trend_chart, create_pie_chart, create_bar_chart
 
+import logging
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Product Performance - RMS", layout="wide")
 st.title("📦 Product Performance Analysis")
 
-# --- Initialize Tools & Load Data into Session State ---
+# --- Initialize Tools & Load Data ---
 @st.cache_resource
 def get_analytics_fetcher_prod():
-    # ... (same as before) ...
     try:
         fetcher = BaserowFetcher(api_token=APP_CONFIG['baserow']['api_token'], base_url=APP_CONFIG['baserow'].get('base_url'))
         return fetcher
@@ -43,21 +45,17 @@ inventory_table_id = APP_CONFIG['baserow'].get('inventory_table_id')
 category_table_id = APP_CONFIG['baserow'].get('category_table_id') 
 catalogue_table_id = APP_CONFIG['baserow'].get('catalogue_table_id') 
 
-# Load all data once per session. This is the key performance improvement.
-load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id, catalogue_table_id,)
+load_and_cache_analytics_data(fetcher, processed_sales_table_id, inventory_table_id, category_table_id, catalogue_table_id)
 
-# Now, get data from session state instead of fetching again
 all_sales_df = st.session_state.get('analytics_sales_df')
 all_inventory_df = st.session_state.get('analytics_inventory_df')
 all_category_df = st.session_state.get('analytics_category_df') 
-
 
 if all_sales_df is None or all_sales_df.empty:
     st.warning("No sales data available. Please upload sales reports on the 'Sales Data Ingestion' page.")
     st.stop()
 
 # --- MSKU Selector ---
-# Get unique MSKUs directly from the in-memory DataFrame, which is much faster
 sales_mskust = set(all_sales_df['MSKU'].dropna().unique())
 inventory_mskust = set()
 if all_inventory_df is not None and not all_inventory_df.empty and 'MSKU' in all_inventory_df.columns:
@@ -77,7 +75,7 @@ selected_start_date_prod = st.sidebar.date_input("Start Date", value=default_sta
 selected_end_date_prod = st.sidebar.date_input("End Date", value=default_end_date_prod, key="product_perf_end_date")
 if selected_start_date_prod > selected_end_date_prod: st.sidebar.error("Start Date cannot be after End Date."); st.stop()
 
-# --- Display MSKU Info (from session state) ---
+# --- Display MSKU Info ---
 if selected_msku:
     st.header(f"Performance for MSKU: {selected_msku}")
     # Display Category
@@ -98,74 +96,139 @@ if selected_msku:
 else: st.header("Select an MSKU from the sidebar")
 
 st.divider()
-
-# --- Process Data for Selected MSKU (using in-memory DataFrame) ---
 if selected_msku:
-    # This now just filters the already loaded DataFrame, which is very fast.
-    sales_df_msku_daily = get_sales_data( # This is now the process_sales_data_for_analytics function
-        all_sales_df, # Pass the full DataFrame from session state
-        selected_start_date_prod,
-        selected_end_date_prod,
-        mskust_list=[selected_msku]
+    sales_df_msku_daily = get_sales_data(
+        all_sales_df, selected_start_date_prod, selected_end_date_prod, mskust_list=[selected_msku]
     )
 
     if sales_df_msku_daily is None or sales_df_msku_daily.empty:
         st.warning(f"No sales data found for MSKU '{selected_msku}' in the selected period.")
     else:
-        st.success(f"Displaying analytics based on {len(sales_df_msku_daily)} daily sales records for {selected_msku}.")
+        profit_df_msku = calculate_profit_data(sales_df_msku_daily, all_inventory_df)
+        has_profit_data = 'Cost' in profit_df_msku.columns and profit_df_msku['Cost'].sum() > 0
         
-        # --- Calculate KPIs for the MSKU ---
-        kpis_msku = calculate_total_sales_kpis(sales_df_msku_daily)
-
-        st.subheader("Key Performance Indicators (KPIs) for this MSKU")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Net Revenue", f"₹{kpis_msku['total_net_revenue']:,.2f}")
-        col2.metric("Total Units Sold", f"{kpis_msku['total_units_sold']:,.0f}")
-        col3.metric("Total Orders (Approx.)", f"{kpis_msku['total_orders']:,}")
-        col4.metric("Avg. Selling Price (ASP)", f"₹{kpis_msku['average_selling_price']:,.2f}")
-        st.divider()
-
-        # --- Sales Trend Chart for the MSKU ---
-        st.subheader("Sales Trends for this MSKU")
-        trend_freq_prod = st.selectbox("Trend Granularity:", options=['D', 'W', 'M'], format_func=lambda x: {'D':'Daily', 'W':'Weekly', 'M':'Monthly'}[x], index=0, key="product_trend_freq_selector")
+        tabs_to_show = ["📈 Performance Overview"]
+        if has_profit_data:
+            tabs_to_show.append("💰 Profitability Breakdown")
         
-        trend_data_revenue_msku = get_sales_trend_data(sales_df_msku_daily, freq=trend_freq_prod)
-        if not trend_data_revenue_msku.empty:
-            fig_rev_trend_msku = create_sales_trend_chart(trend_data_revenue_msku, y_column='Net Revenue', y_column_name="Net Revenue (₹)", title=f"{ {'D':'Daily', 'W':'Weekly', 'M':'Monthly'}[trend_freq_prod]} Net Revenue Trend for {selected_msku}")
-            st.plotly_chart(fig_rev_trend_msku, use_container_width=True)
-        else: st.info("Not enough data for revenue trend.")
+        tabs = st.tabs(tabs_to_show)
+        
+        with tabs[0]: # "Performance Overview" Tab
+            st.subheader("Key Performance Indicators (KPIs)")
+            kpis_msku = calculate_total_sales_kpis(profit_df_msku)
+            profit_kpis_msku = calculate_total_profit_kpis(profit_df_msku)
+            
+            kpi_cols = st.columns(4)
+            kpi_cols[0].metric("Total Net Revenue", f"₹{kpis_msku['total_net_revenue']:,.2f}")
+            if has_profit_data:
+                kpi_cols[1].metric("Total Gross Profit", f"₹{profit_kpis_msku['total_gross_profit']:,.2f}")
+                kpi_cols[2].metric("Gross Margin", f"{profit_kpis_msku['gross_margin']:.2f}%")
+            kpi_cols[3].metric("Total Units Sold", f"{kpis_msku['total_units_sold']:,.0f}")
+            st.divider()
 
-        trend_data_units_msku = get_sales_trend_data(sales_df_msku_daily, freq=trend_freq_prod)
-        if not trend_data_units_msku.empty and 'Quantity Sold' in trend_data_units_msku.columns:
-            fig_units_trend_msku = create_sales_trend_chart(trend_data_units_msku, y_column='Quantity Sold', y_column_name="Units Sold", title=f"{ {'D':'Daily', 'W':'Weekly', 'M':'Monthly'}[trend_freq_prod]} Units Sold Trend for {selected_msku}")
-            st.plotly_chart(fig_units_trend_msku, use_container_width=True)
-        else: st.info("Not enough data for units sold trend.")
-        st.divider()
+            st.subheader("Performance Trends")
+            trend_freq_prod = st.selectbox("Trend Granularity:", options=['D', 'W', 'M'], format_func=lambda x: {'D':'Daily', 'W':'Weekly', 'M':'Monthly'}[x], key="product_trend_freq_selector")
+            
+            trend_data = profit_df_msku.set_index(pd.to_datetime(profit_df_msku['Sale Date'])).resample(trend_freq_prod).agg({
+                'Net Revenue': 'sum', 'Gross Profit': 'sum', 'Quantity Sold': 'sum'
+            }).reset_index()
 
-        # --- Sales Breakdown by Platform & Account for this MSKU ---
-        st.subheader("Sales Breakdown for this MSKU")
-        col_plat_prod, col_acc_prod = st.columns(2)
+            if not trend_data.empty:
+                fig_revenue_trend = create_sales_trend_chart(trend_data, y_column='Net Revenue', y_column_name="Net Revenue (₹)", title=f"Net Revenue Trend")
+                st.plotly_chart(fig_revenue_trend, use_container_width=True)
+                if has_profit_data:
+                    fig_profit_trend = create_sales_trend_chart(trend_data, y_column='Gross Profit', y_column_name="Gross Profit (₹)", title=f"Gross Profit Trend")
+                    st.plotly_chart(fig_profit_trend, use_container_width=True)
+                fig_units_trend = create_sales_trend_chart(trend_data, y_column='Quantity Sold', y_column_name="Units Sold", title=f"Units Sold Trend")
+                st.plotly_chart(fig_units_trend, use_container_width=True)
+            else:
+                st.info("Not enough data to display trends.")
+            
+            # --- RESTORED: Sales Breakdown by Platform & Account ---
+            st.divider()
+            st.subheader("Sales Breakdown by Channel")
+            col_plat_prod, col_acc_prod = st.columns(2)
 
-        with col_plat_prod:
-            st.markdown("##### By Platform")
-            if not sales_df_msku_daily.empty and 'Platform' in sales_df_msku_daily.columns:
+            with col_plat_prod:
+                st.markdown("##### By Platform")
                 platform_sales_msku = sales_df_msku_daily.groupby('Platform', as_index=False)['Net Revenue'].sum()
                 if not platform_sales_msku.empty:
-                    fig_plat_pie_msku = create_pie_chart(platform_sales_msku, names_column='Platform', values_column='Net Revenue', title=f'Revenue by Platform for {selected_msku}')
+                    fig_plat_pie_msku = create_pie_chart(platform_sales_msku, names_column='Platform', values_column='Net Revenue', title=f'Revenue by Platform')
                     st.plotly_chart(fig_plat_pie_msku, use_container_width=True)
                 else: st.info("No platform breakdown data.")
-            else: st.info("Platform data missing.")
-                
-        with col_acc_prod:
-            st.markdown("##### By Account")
-            if not sales_df_msku_daily.empty and 'Account Name' in sales_df_msku_daily.columns and 'Platform' in sales_df_msku_daily.columns:
+                    
+            with col_acc_prod:
+                st.markdown("##### By Account")
                 sales_df_msku_daily['Platform_Account_Display'] = sales_df_msku_daily['Platform'] + " - " + sales_df_msku_daily['Account Name']
                 account_sales_msku = sales_df_msku_daily.groupby('Platform_Account_Display', as_index=False)['Net Revenue'].sum()
                 if not account_sales_msku.empty:
-                    fig_acc_pie_msku = create_pie_chart(account_sales_msku, names_column='Platform_Account_Display', values_column='Net Revenue', title=f'Revenue by Account for {selected_msku}')
+                    fig_acc_pie_msku = create_pie_chart(account_sales_msku, names_column='Platform_Account_Display', values_column='Net Revenue', title=f'Revenue by Account')
                     st.plotly_chart(fig_acc_pie_msku, use_container_width=True)
                 else: st.info("No account breakdown data.")
-            else: st.info("Account/Platform data missing.")
+            # --- END RESTORED SECTION ---
+
+        # Conditionally create the second tab only if there is profit data
+        if has_profit_data:
+            with tabs[1]: # "Profitability Breakdown" Tab
+                st.subheader("Profitability Breakdown by Platform & Account")
+                
+                # We already calculated platform_profit_summary in the previous version
+                platform_profit_summary = profit_df_msku.groupby(['Platform', 'Account Name'], as_index=False).agg(
+                    total_units_sold=('Quantity Sold', 'sum'),
+                    total_net_revenue=('Net Revenue', 'sum'),
+                    total_cogs=('Total COGS', 'sum'),
+                    total_gross_profit=('Gross Profit', 'sum')
+                )
+                platform_profit_summary['gross_margin_%'] = np.where(
+                    platform_profit_summary['total_net_revenue'] > 0,
+                    (platform_profit_summary['total_gross_profit'] / platform_profit_summary['total_net_revenue']) * 100, 0
+                )
+                
+                st.dataframe(
+                    platform_profit_summary.sort_values(by='total_gross_profit', ascending=False),
+                    column_config={
+                        "total_units_sold": st.column_config.NumberColumn("Units Sold", format="%d"),
+                        "total_net_revenue": st.column_config.NumberColumn("Net Revenue", format="₹%,.2f"),
+                        "total_cogs": st.column_config.NumberColumn("Total COGS", format="₹%,.2f"),
+                        "total_gross_profit": st.column_config.NumberColumn("Gross Profit", format="₹%,.2f"),
+                        "gross_margin_%": st.column_config.NumberColumn("Gross Margin", format="%.2f%%"),
+                    },
+                    use_container_width=True, hide_index=True
+                )
+
+                # --- NEW: Profit Breakdown Charts ---
+                st.divider()
+                profit_chart_col1, profit_chart_col2 = st.columns(2)
+                with profit_chart_col1:
+                    # Chart showing which platform contributes the most profit
+                    platform_profit_chart_data = platform_profit_summary.groupby('Platform', as_index=False)['total_gross_profit'].sum()
+                    fig_plat_profit_pie = create_pie_chart(
+                        platform_profit_chart_data, 
+                        names_column='Platform', 
+                        values_column='total_gross_profit', 
+                        title='Gross Profit by Platform'
+                    )
+                    st.plotly_chart(fig_plat_profit_pie, use_container_width=True)
+                
+                with profit_chart_col2:
+                    # Chart showing which platform has the best margin
+                    # Calculate weighted average margin per platform
+                    platform_margin_data = platform_profit_summary.groupby('Platform', as_index=False).agg(
+                        total_net_revenue=('total_net_revenue', 'sum'),
+                        total_gross_profit=('total_gross_profit', 'sum')
+                    )
+                    platform_margin_data['gross_margin_%'] = np.where(
+                        platform_margin_data['total_net_revenue'] > 0,
+                        (platform_margin_data['total_gross_profit'] / platform_margin_data['total_net_revenue']) * 100, 0
+                    )
+                    fig_plat_margin_bar = create_bar_chart(
+                        platform_margin_data,
+                        x_column='Platform',
+                        y_column='gross_margin_%',
+                        y_column_name='Gross Margin %',
+                        title='Gross Margin % by Platform'
+                    )
+                    st.plotly_chart(fig_plat_margin_bar, use_container_width=True)
 else:
     st.info("Select an MSKU from the sidebar to view its performance details.")
 

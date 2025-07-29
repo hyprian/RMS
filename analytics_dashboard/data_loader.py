@@ -46,6 +46,7 @@ def _load_single_dataset(
     
     # Perform one-time cleaning specific to the dataset
     if dataset_name == 'processed_sales_data' and not df.empty:
+        df['Sale Date'] = df['Sale Date'].astype(str).str.strip()
         df['Sale Date'] = pd.to_datetime(df['Sale Date'], errors='coerce').dt.date
         df['Report Period Start Date'] = pd.to_datetime(df['Report Period Start Date'], errors='coerce').dt.date
         df['Quantity Sold'] = pd.to_numeric(df['Quantity Sold'], errors='coerce').fillna(0)

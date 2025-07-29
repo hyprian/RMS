@@ -175,4 +175,54 @@ def calculate_profit_data(daily_sales_df: pd.DataFrame, inventory_df: pd.DataFra
     profit_df['Gross Profit'] = profit_df['Net Revenue'] - profit_df['Total COGS']
     
     logger.info(f"KPI_CALC: Successfully calculated profit data for {len(profit_df)} records.")
+    return 
+
+
+def calculate_profit_data(daily_sales_df: pd.DataFrame, inventory_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merges sales data with inventory (cost) data and calculates profit metrics.
+    Returns the original DataFrame with profit columns added, even if inventory is missing.
+    """
+    # Start with a copy to avoid modifying the original DataFrame
+    profit_df = daily_sales_df.copy()
+
+    if inventory_df is None or inventory_df.empty or 'MSKU' not in inventory_df.columns or 'Cost' not in inventory_df.columns:
+        logger.warning("KPI_CALC: Profit calculation running without cost data. Gross Profit will equal Net Revenue.")
+        profit_df['Cost'] = 0
+        profit_df['Total COGS'] = 0
+        profit_df['Gross Profit'] = profit_df['Net Revenue']
+        return profit_df
+
+    cost_data = inventory_df[['MSKU', 'Cost']].copy()
+    
+    # Merge sales data with cost data
+    profit_df = pd.merge(profit_df, cost_data, on='MSKU', how='left')
+    profit_df['Cost'].fillna(0, inplace=True)
+
+    profit_df['Total COGS'] = profit_df['Quantity Sold'] * profit_df['Cost']
+    profit_df['Gross Profit'] = profit_df['Net Revenue'] - profit_df['Total COGS']
+    
+    logger.info(f"KPI_CALC: Successfully calculated profit data for {len(profit_df)} records.")
     return profit_df
+
+# --- ADD THIS NEW FUNCTION ---
+def calculate_total_profit_kpis(profit_df: pd.DataFrame):
+    """Calculates high-level profit KPIs from a profit-enabled DataFrame."""
+    if profit_df is None or profit_df.empty or 'Gross Profit' not in profit_df.columns:
+        return {
+            'total_gross_profit': 0,
+            'total_cogs': 0,
+            'gross_margin': 0
+        }
+
+    total_gross_profit = profit_df['Gross Profit'].sum()
+    total_net_revenue = profit_df['Net Revenue'].sum()
+    total_cogs = profit_df['Total COGS'].sum()
+    
+    gross_margin = (total_gross_profit / total_net_revenue * 100) if total_net_revenue > 0 else 0
+
+    return {
+        'total_gross_profit': total_gross_profit,
+        'total_cogs': total_cogs,
+        'gross_margin': gross_margin
+    }
