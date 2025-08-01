@@ -563,19 +563,50 @@ with product_tab:
             )
             selected_rows = edited_overview_df[edited_overview_df['Select']]
             if st.button("Add Selected to Plan Draft", disabled=selected_rows.empty):
+                items_added_count = 0
                 for index, row in selected_rows.iterrows():
+                    # Check if the MSKU is already in the draft to avoid duplicates
                     if row['MSKU'] not in st.session_state.replenishment_plan_draft_df['MSKU'].values:
+                        items_added_count += 1
+                        
+                        # Get the full data for the selected MSKU from the original, unfiltered overview_df
+                        # This ensures we have access to all columns, even if they were hidden in the editor view
                         full_row_data = overview_df[overview_df['MSKU'] == row['MSKU']].iloc[0]
+                        
+                        # Determine the suggested order quantities and primary shipment route
                         sea_qty = row.get('sea_order_quantity', 0)
                         air_qty = row.get('air_order_quantity', 0)
+                        
+                        primary_route = 'Air'
                         if sea_qty > 0:
-                            new_item = {'MSKU': row['MSKU'], 'Category': full_row_data.get('Category', ''), 'HSN Code': full_row_data.get('HSN Code', ''), 'Image URL': row.get('Image URL', ''), 'Order Quantity': sea_qty, 'Notes': row.get('order_reason', ''), 'Vendor Name': full_row_data.get('Supplier', ''), 'Unit Cost': 0.0, 'Currency': 'USD', 'Shipment Route': 'Sea'}
-                            st.session_state.replenishment_plan_draft_df = pd.concat([st.session_state.replenishment_plan_draft_df, pd.DataFrame([new_item])], ignore_index=True)
-                        if air_qty > 0:
-                            new_item = {'MSKU': row['MSKU'], 'Category': full_row_data.get('Category', ''), 'HSN Code': full_row_data.get('HSN Code', ''), 'Image URL': row.get('Image URL', ''), 'Order Quantity': air_qty, 'Notes': row.get('order_reason', ''), 'Vendor Name': full_row_data.get('Supplier', ''), 'Unit Cost': 0.0, 'Currency': 'USD', 'Shipment Route': 'Air'}
-                            st.session_state.replenishment_plan_draft_df = pd.concat([st.session_state.replenishment_plan_draft_df, pd.DataFrame([new_item])], ignore_index=True)
-                st.success(f"Added suggested orders to the plan draft below.")
-                st.rerun()
+                            primary_route = 'Sea'
+                        
+                        order_qty = sea_qty + air_qty
+
+                        new_item = {
+                            'MSKU': row['MSKU'],
+                            'Category': full_row_data.get('Category', ''),
+                            'HSN Code': full_row_data.get('HSN Code', ''),
+                            'Image URL': row.get('Image URL', ''),
+                            'Order Quantity': order_qty, # Start with the suggested qty (can be 0)
+                            'Notes': row.get('order_reason', ''), # Use the order_reason for notes
+                            'Vendor Name': full_row_data.get('Supplier', ''),
+                            'Unit Cost': 0.0,
+                            'Currency': 'USD',
+                            'Shipment Route': primary_route
+                        }
+                        new_item_df = pd.DataFrame([new_item])
+                        st.session_state.replenishment_plan_draft_df = pd.concat(
+                            [st.session_state.replenishment_plan_draft_df, new_item_df],
+                            ignore_index=True
+                        )
+
+                if items_added_count > 0:
+                    st.success(f"Added {items_added_count} new item(s) to the plan draft below.")
+                    st.rerun()
+                else:
+                    st.warning("Selected item(s) are already in the plan draft.")
+        
         with on_order_tab:
             st.subheader("Details of Items Currently On Order")
             

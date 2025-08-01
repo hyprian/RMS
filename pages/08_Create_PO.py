@@ -189,11 +189,11 @@ with st.container(border=True):
         st.text_input("Projection Code", key="po_header_projection_code")
     with col2:
         st.date_input("Order Date", key="po_header_order_date")
-    st.subheader("Additional PO-Level Charges (Optional)")
-    charge_col1, charge_col2, charge_col3 = st.columns(3)
-    with charge_col1: st.number_input("Carrying Amount (INR)", key="po_header_carrying_amount", min_value=0.0, format="%.2f")
-    with charge_col2: st.number_input("Porter Charges (INR)", key="po_header_porter_charges", min_value=0.0, format="%.2f")
-    with charge_col3: st.number_input("Packaging/Other Charges (INR)", key="po_header_packaging_charges", min_value=0.0, format="%.2f")
+    # st.subheader("Additional PO-Level Charges (Optional)")
+    # charge_col1, charge_col2, charge_col3 = st.columns(3)
+    # with charge_col1: st.number_input("Carrying Amount (INR)", key="po_header_carrying_amount", min_value=0.0, format="%.2f")
+    # with charge_col2: st.number_input("Porter Charges (INR)", key="po_header_porter_charges", min_value=0.0, format="%.2f")
+    # with charge_col3: st.number_input("Packaging/Other Charges (INR)", key="po_header_packaging_charges", min_value=0.0, format="%.2f")
 
 st.divider()
 st.header("2. Add Line Items Manually")
