@@ -59,7 +59,7 @@ import yaml
 import os
 import logging
 import streamlit as st
-from .gspread_client import get_gspread_client, get_settings_from_gsheet
+from .gspread_client import get_gspread_client, get_settings_from_gsheet , get_parameters_from_gsheet
 
 
 def _load_static_config(config_path="settings.yaml"):
@@ -90,45 +90,98 @@ def load_and_merge_configs():
     # Get GSheet details from the static config
     gsheet_settings = static_config.get("google_sheet_settings", {})
     spreadsheet_id = gsheet_settings.get("spreadsheet_id")
-    worksheet_name = gsheet_settings.get("worksheet_name")
+    # worksheet_name = gsheet_settings.get("worksheet_name")
 
-    if not spreadsheet_id or not worksheet_name:
-        error_msg = "google_sheet_settings (spreadsheet_id, worksheet_name) not found in settings.yaml"
+    if not spreadsheet_id:
+        error_msg = "google_sheet_settings (spreadsheet_id) not found in settings.yaml"
         logging.error(error_msg)
         return {"error": error_msg}
-
+    
     gsheet_client = get_gspread_client()
     if isinstance(gsheet_client, str): # Check if get_gspread_client returned an error string
         return {"error": gsheet_client}
-        
-    dynamic_settings = get_settings_from_gsheet(gsheet_client, spreadsheet_id, worksheet_name)
-    if "error" in dynamic_settings:
-        return dynamic_settings # Pass the error up
     
+    # 1. Fetch Table IDs (as before)
+    table_id_worksheet = gsheet_settings.get("worksheet_name", "Config")
+    dynamic_settings = get_settings_from_gsheet(gsheet_client, spreadsheet_id, table_id_worksheet)
+    if "error" in dynamic_settings:
+        return dynamic_settings
+    
+    # --- NEW: Fetch Replenishment Parameters ---
+    params_worksheet = "Parameters" # As per your new tab name
+    replenishment_params = get_parameters_from_gsheet(gsheet_client, spreadsheet_id, params_worksheet)
+    if "error" in replenishment_params:
+        return replenishment_params # Pass the error up
+    # --- END NEW ---
+        
+    # 3. Merge settings
     if dynamic_settings:
-        if 'baserow' not in static_config:
-            static_config['baserow'] = {}
+        if 'baserow' not in static_config: static_config['baserow'] = {}
         for key, value in dynamic_settings.items():
             static_config['baserow'][key] = value
-        logging.info("Successfully merged dynamic settings from Google Sheets into the main config.")
+        logging.info("Successfully merged dynamic table IDs from Google Sheets.")
+
+    # --- NEW: Add parameters to the config ---
+    static_config['replenishment_parameters'] = replenishment_params
+    logging.info("Successfully merged replenishment parameters from Google Sheets.")
+    # --- END NEW ---
 
     return static_config
 
 def setup_logging(config):
-    # ... (existing setup_logging code, no changes needed) ...
+    """
+    Configures logging based on the loaded configuration.
+    This version is more robust and will override any pre-existing logging configurations.
+    """
     log_config = config.get('logging', {})
-    level = getattr(logging, log_config.get('level', 'INFO').upper(), logging.INFO)
+    if not log_config:
+        print("WARNING: 'logging' section not found in config. Using basic logging.")
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        return
+
+    level_str = log_config.get('level', 'INFO').upper()
+    level = getattr(logging, level_str, logging.INFO)
     log_format = log_config.get('format', '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     log_file = log_config.get('file_name', 'rms_app.log')
+    
     if not os.path.isabs(log_file):
+        # Correctly find the project root from this file's location
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         log_file_path = os.path.join(project_root, log_file)
-    else: log_file_path = log_file
-    # Avoid re-configuring logging if it's already set up
-    if not logging.getLogger().handlers:
-        logging.basicConfig(level=level, format=log_format, handlers=[logging.FileHandler(log_file_path), logging.StreamHandler()])
-        logging.info(f"Logging configured. Level: {logging.getLevelName(level)}. Log file: {log_file_path}")
+    else: 
+        log_file_path = log_file
 
+    # --- THIS IS THE CRUCIAL FIX ---
+    # Get the root logger
+    root_logger = logging.getLogger()
+    
+    # Set the level on the root logger
+    root_logger.setLevel(level)
+    
+    # Remove any existing handlers to prevent duplicate logs or conflicts
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+    # --- END FIX ---
+
+    # Create your own handlers
+    # File handler to write to rms_app.log
+    try:
+        file_handler = logging.FileHandler(log_file_path, mode='a') # 'a' for append
+        file_handler.setLevel(level)
+        file_handler.setFormatter(logging.Formatter(log_format))
+        root_logger.addHandler(file_handler)
+    except Exception as e:
+        # If file handler fails, print an error to the console
+        print(f"ERROR: Could not create log file handler for {log_file_path}. Error: {e}")
+
+    # Stream handler to print to the terminal
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(level)
+    stream_handler.setFormatter(logging.Formatter(log_format))
+    root_logger.addHandler(stream_handler)
+    
+    logging.info(f"Logging configured. Level: {level_str}. Log file: {log_file_path}")
+    
 def save_app_config(config_data, config_path="settings.yaml"):
     """Saves the static configuration dictionary to a YAML file."""
     try:
@@ -142,12 +195,10 @@ def save_app_config(config_data, config_path="settings.yaml"):
 
 # --- Main config loading logic ---
 # This block runs when the module is first imported.
-try:
-    # The load_and_merge_configs function is cached, so this is fast on subsequent page loads.
-    APP_CONFIG = load_and_merge_configs()
-    if "error" not in APP_CONFIG:
-        setup_logging(APP_CONFIG)
-except Exception as e:
+APP_CONFIG = load_and_merge_configs()
+if "error" not in APP_CONFIG:
+    setup_logging(APP_CONFIG)
+else:
+    # Fallback basic logging if config fails to load
     logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
-    logging.error(f"Failed to initialize application configuration or logging: {e}. Using fallback logging.")
-    APP_CONFIG = {}
+    logging.warning(f"Using fallback logging due to config error: {APP_CONFIG.get('error')}")

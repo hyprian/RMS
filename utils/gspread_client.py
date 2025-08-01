@@ -49,6 +49,47 @@ def get_settings_from_gsheet(client, spreadsheet_id, worksheet_name):
         logger.error(error_message, exc_info=True)
         return {"error": error_message} # Return a dict with an error key
 
+def get_parameters_from_gsheet(client, spreadsheet_id, worksheet_name="Parameters"):
+    """
+    Fetches replenishment parameters from the Google Sheet.
+    Expects two columns: 'Parameter_Key' and 'Parameter_Value'.
+    """
+    if not client:
+        return {}
+    try:
+        spreadsheet = client.open_by_key(spreadsheet_id)
+        worksheet = spreadsheet.worksheet(worksheet_name)
+        records = worksheet.get_all_records()
+        
+        parameters_dict = {}
+        for row in records:
+            key = row.get('Parameter_Key')
+            value = row.get('Parameter_Value')
+            if key:
+                # Try to convert to number (int or float), otherwise keep as string/bool
+                try:
+                    if '.' in str(value):
+                        parameters_dict[key] = float(value)
+                    else:
+                        parameters_dict[key] = int(value)
+                except (ValueError, TypeError):
+                    # Handle boolean strings
+                    if str(value).lower() == 'true':
+                        parameters_dict[key] = True
+                    elif str(value).lower() == 'false':
+                        parameters_dict[key] = False
+                    else:
+                        parameters_dict[key] = value # Keep as string
+        
+        logger.info(f"Successfully fetched {len(parameters_dict)} replenishment parameters from Google Sheet.")
+        return parameters_dict
+    except Exception as e:
+        error_message = f"Failed to fetch parameters from GSheet '{worksheet_name}' tab. Check sheet/tab names and permissions. Error: {e}"
+        logger.error(error_message, exc_info=True)
+        # Return a dict with an error key to be handled by the loader
+        return {"error": error_message}
+# --- END NEW FUNCTION ---
+
 def update_settings_in_gsheet(client, spreadsheet_id, worksheet_name, settings_to_update: dict):
     """Updates specific settings in the Google Sheet using its ID."""
     if not client:

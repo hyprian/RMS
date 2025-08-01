@@ -78,3 +78,20 @@ replenishment_table:
 google_sheet_settings:
   spreadsheet_id: 1u14J32olXDldR2UMfkt-CwGkJxkbna4-YYnvtSuJrbA
   worksheet_name: Config
+replenishment_parameters:
+  review_period_days: 15
+  base_safety_buffer_pct: 10
+  max_safety_buffer_pct: 30
+  danger_threshold_days: 7
+  air_transit_days: 5
+  sea_transit_days: 30
+  admin_days: 2
+  air_bridge_buffer_pct: 5
+  non_focused_multiplier: 1.5
+  is_peak_season: false
+  peak_season_multiplier: 1.5
+  holiday_buffer_days: 5
+  fast_moving_threshold: 1.5
+  slow_moving_threshold: 0.3
+  dead_stock_days: 60
+  overstock_days: 60

@@ -164,43 +164,89 @@ def get_msku_cost_details(category_df: pd.DataFrame, msku: str) -> dict:
 
 def get_open_po_data(all_pos_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Aggregates data for all open purchase orders to get on-order quantities and details per MSKU.
+    Aggregates data for all open POs to get on-order quantities
+    by shipment route, the earliest sea ETA, AND a detailed list of POs for each MSKU.
     """
     if all_pos_df is None or all_pos_df.empty:
-        return pd.DataFrame(columns=['MSKU', 'On Order Quantity', 'PO Details'])
+        return pd.DataFrame()
 
-    # Define what constitutes an "open" PO
+    logger.info("PO_MGMT: Aggregating open PO data...")
     open_statuses = ["Draft", "Sent For Approval", "Final Invoice Received", "Dispatched", "In Transit", "On Hold"]
-    
-    # Filter for open POs
     open_pos_df = all_pos_df[all_pos_df['Status'].isin(open_statuses)].copy()
 
     if open_pos_df.empty:
-        return pd.DataFrame(columns=['MSKU', 'On Order Quantity', 'PO Details'])
+        logger.info("PO_MGMT: No open POs found.")
+        return pd.DataFrame()
 
-    # Ensure necessary columns are of the correct type for aggregation
     open_pos_df['Quantity'] = pd.to_numeric(open_pos_df['Quantity'], errors='coerce').fillna(0)
     open_pos_df['Arrive by'] = pd.to_datetime(open_pos_df['Arrive by'], errors='coerce')
-    
-    # Create a dictionary of details for each line item
+    open_pos_df['Shipment Route'] = open_pos_df['Shipment Route'].fillna('Air')
+    open_pos_df['Msku Code'] = open_pos_df['Msku Code'].astype(str)
+
+    # --- AGGREGATE ON-ORDER QUANTITIES BY ROUTE (No change here) ---
+    on_order_qty_df = open_pos_df.pivot_table(
+        index='Msku Code', columns='Shipment Route', values='Quantity',
+        aggfunc='sum', fill_value=0
+    ).reset_index()
+    on_order_qty_df.rename(columns={'Msku Code': 'MSKU', 'Air': 'on_order_qty_air', 'Sea': 'on_order_qty_sea'}, inplace=True)
+    if 'on_order_qty_air' not in on_order_qty_df.columns: on_order_qty_df['on_order_qty_air'] = 0
+    if 'on_order_qty_sea' not in on_order_qty_df.columns: on_order_qty_df['on_order_qty_sea'] = 0
+
+    # --- FIND EARLIEST SEA ETA (No change here) ---
+    sea_pos_df = open_pos_df[open_pos_df['Shipment Route'].str.upper() == 'SEA'].copy()
+    if not sea_pos_df.empty:
+        sea_eta_df = sea_pos_df.groupby('Msku Code')['Arrive by'].min().reset_index()
+        sea_eta_df.rename(columns={'Msku Code': 'MSKU', 'Arrive by': 'sea_order_eta'}, inplace=True)
+        final_open_po_df = pd.merge(on_order_qty_df, sea_eta_df, on='MSKU', how='left')
+    else:
+        final_open_po_df = on_order_qty_df
+        final_open_po_df['sea_order_eta'] = pd.NaT
+
+    # --- NEW: AGGREGATE THE DETAILED LIST OF DICTIONARIES ---
     def create_detail_dict(row):
         return {
             'Po No.': row.get('Po No.'),
             'Vendor Name': row.get('Vendor Name'),
             'Quantity': int(row.get('Quantity', 0)),
-            'Arrive by': row.get('Arrive by').strftime('%d-%b-%Y') if pd.notna(row.get('Arrive by')) else 'N/A'
+            'Arrive by': row.get('Arrive by').strftime('%d-%b-%Y') if pd.notna(row.get('Arrive by')) else 'N/A',
+            'Shipment Route': row.get('Shipment Route')
         }
     
     open_pos_df['PO_Detail_Dict'] = open_pos_df.apply(create_detail_dict, axis=1)
-
-    # Now, group by MSKU and aggregate
-    aggregated_pos = open_pos_df.groupby('Msku Code').agg(
-        On_Order_Quantity=('Quantity', 'sum'),
-        PO_Details=('PO_Detail_Dict', lambda x: list(x)) # Collect all detail dicts into a list
-    ).reset_index()
-
-    # Rename MSKU column for consistency
-    aggregated_pos.rename(columns={'Msku Code': 'MSKU'}, inplace=True)
     
-    logger.info(f"Aggregated open PO data for {len(aggregated_pos)} MSKUs.")
-    return aggregated_pos
+    po_details_agg = open_pos_df.groupby('Msku Code').agg(
+        PO_Details=('PO_Detail_Dict', lambda x: list(x))
+    ).reset_index()
+    po_details_agg.rename(columns={'Msku Code': 'MSKU'}, inplace=True)
+    
+    # --- MERGE THE DETAILS BACK INTO THE FINAL DATAFRAME ---
+    final_open_po_df = pd.merge(final_open_po_df, po_details_agg, on='MSKU', how='left')
+    # Ensure the PO_Details column exists even if the merge fails for some reason
+    if 'PO_Details' not in final_open_po_df.columns:
+        final_open_po_df['PO_Details'] = [[] for _ in range(len(final_open_po_df))]
+    else:
+        # Fill any NaNs with empty lists
+        final_open_po_df['PO_Details'] = final_open_po_df['PO_Details'].apply(lambda d: d if isinstance(d, list) else [])
+
+    logger.info(f"PO_MGMT: Aggregated open PO data for {len(final_open_po_df)} MSKUs.")
+    return final_open_po_df
+
+
+def get_last_order_dates(all_pos_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Finds the most recent 'Order Date' for each MSKU from the PO table.
+    """
+    if all_pos_df is None or all_pos_df.empty or 'Msku Code' not in all_pos_df.columns or 'Order Date' not in all_pos_df.columns:
+        return pd.DataFrame(columns=['MSKU', 'last_order_date'])
+
+    df = all_pos_df[['Msku Code', 'Order Date']].copy()
+    # The get_all_pos function already converts 'Order Date' to datetime
+    df.dropna(subset=['Msku Code', 'Order Date'], inplace=True)
+
+    if df.empty:
+        return pd.DataFrame(columns=['MSKU', 'last_order_date'])
+
+    last_dates = df.groupby('Msku Code')['Order Date'].max().reset_index()
+    last_dates.rename(columns={'Msku Code': 'MSKU', 'Order Date': 'last_order_date'}, inplace=True)
+    
+    return last_dates   

@@ -710,37 +710,35 @@ class BaserowFetcher:
     
     def get_category_data(self, table_id):
         """
-        Fetches product category data from Baserow.
-        Assumes columns 'Msku' and 'Category'.
+        Fetches product category, cost, supplier, and strategic data from Baserow.
         """
-        logger.info(f"Fetching category data from table {table_id}")
+        logger.info(f"Fetching category & strategic data from table {table_id}")
         
-        # These are the columns we need from this specific table
-        required_cols = ['Msku', 'Category' , 'HSN Code'] # Add other columns like 'Cost' if needed for other features
+        # --- MODIFICATION: Add all new required columns ---
+        required_cols = [
+            'Msku', 'Category', 'HSN Code', 'Cost Inc.GST',
+            'Vendor', 'Product Type', 'Vendor Lead Time' # Your sample shows 'Vendor Lead time'
+        ]
         
-        # Use the generic get_table_data_as_dataframe method
         df = self.get_table_data_as_dataframe(table_id, required_columns=required_cols)
         
         if df.empty:
             logger.warning(f"No category data fetched or table {table_id} was empty.")
-            return pd.DataFrame(columns=required_cols)
+            return pd.DataFrame()
 
-        # Clean the data
-        df['MSKU'] = df['Msku'].astype(str).str.strip() # Standardize to 'MSKU'
+        # Standardize the 'Msku' column name to 'MSKU'
+        df.rename(columns={'Msku': 'MSKU', 'Vendor': 'Supplier', 'Vendor Lead Time': 'Vendor Lead Time (days)'}, inplace=True)
+        df['MSKU'] = df['MSKU'].astype(str).str.strip()
         df.dropna(subset=['MSKU'], inplace=True)
         df = df[df['MSKU'] != '']
 
-        # Select only the columns we need for now to keep it clean
-        # If you need COGS from here later, you can add 'Cost Inc.GST' etc.
-        final_df = df[['MSKU', 'Category','HSN Code']].copy()
-        
-        # Handle duplicate MSKUs in the category table - take the first one found
-        if final_df['MSKU'].duplicated().any():
-            logger.warning(f"Duplicate MSKUs found in category table {table_id}. Keeping the first entry for each.")
-            final_df.drop_duplicates(subset=['MSKU'], keep='first', inplace=True)
+        # Handle duplicates
+        if df['MSKU'].duplicated().any():
+            logger.warning(f"Duplicate MSKUs found in category table {table_id}. Keeping first entry.")
+            df.drop_duplicates(subset=['MSKU'], keep='first', inplace=True)
             
-        logger.info(f"Successfully processed {len(final_df)} unique MSKU category records.")
-        return final_df
+        logger.info(f"Successfully processed {len(df)} unique MSKU category/strategic records.")
+        return df
 
     def get_catalogue_data(self, table_id):
         """
