@@ -36,6 +36,7 @@ if 'ingestion_platform_conf' not in st.session_state:
 if 'ingestion_account_name' not in st.session_state:
     st.session_state.ingestion_account_name = None
 
+UNMAPPED_SKU_FILE = os.path.join(project_root, "unmapped_skus.csv")
 
 # --- Initialize Tools ---
 @st.cache_resource
@@ -137,9 +138,31 @@ if st.button("Process File (Preview Data)", key="ingest_process_file_button", di
         with open(temp_file_path, "wb") as f: f.write(uploaded_file.getbuffer())
         
         try:
-            standardized_df = parser.parse(temp_file_path, report_start_date, report_end_date)
+            standardized_df, unmapped_skus_from_file  = parser.parse(temp_file_path, report_start_date, report_end_date)
         finally:
             if os.path.exists(temp_file_path): os.remove(temp_file_path)
+
+    # --- NEW: Handle and save unmapped SKUs ---
+    if unmapped_skus_from_file:
+        st.warning(f"Found {len(unmapped_skus_from_file)} unmapped SKUs in this file. They will be added to the central log.")
+        
+        # Load existing unmapped SKUs if the file exists
+        if os.path.exists(UNMAPPED_SKU_FILE):
+            existing_unmapped_df = pd.read_csv(UNMAPPED_SKU_FILE)
+        else:
+            existing_unmapped_df = pd.DataFrame(columns=["Platform SKU", "Platform", "Account", "Source File", "First Seen"])
+
+        new_unmapped_df = pd.DataFrame(unmapped_skus_from_file)
+        new_unmapped_df['First Seen'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Combine and remove duplicates based on SKU, Platform, and Account
+        combined_unmapped_df = pd.concat([existing_unmapped_df, new_unmapped_df], ignore_index=True)
+        combined_unmapped_df.drop_duplicates(subset=["Platform SKU", "Platform", "Account"], keep='first', inplace=True)
+        
+        # Save the updated list
+        combined_unmapped_df.to_csv(UNMAPPED_SKU_FILE, index=False)
+        st.info(f"Unmapped SKU log at `{UNMAPPED_SKU_FILE}` has been updated.")
+        # --- END NEW ---
 
     if standardized_df is None or standardized_df.empty:
         st.warning("No data processed from the file...")

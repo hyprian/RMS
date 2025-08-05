@@ -46,98 +46,102 @@ class FlipkartSalesParser:
         qty_col = self.account_config.get('quantity_column', 'Final Sale Units')
         return [qty_col]
 
-    def parse(self, file_path, report_start_date, report_end_date) -> pd.DataFrame:
-        logger.info(f"Starting Flipkart parsing for file: {file_path}")
+    def parse(self, file_path, report_start_date_obj: datetime.date, report_end_date_obj: datetime.date):
+        logger.info(f"FLIPKART_PARSER: Starting Flipkart parsing for file: {file_path}")
         sku_col = self._get_sku_column_name()
-        logger.debug(f"Flipkart parser using SKU column: '{sku_col}'")
+        unmapped_skus = []
+        empty_df = pd.DataFrame()
 
         try:
             df = pd.read_excel(file_path, dtype={sku_col: str}, engine='openpyxl')
         except Exception as e:
-            logger.error(f"Error reading Flipkart file {file_path}: {e}", exc_info=True)
-            return pd.DataFrame()
+            logger.error(f"FLIPKART_PARSER: Error reading Flipkart file {file_path}: {e}", exc_info=True)
+            return empty_df, unmapped_skus
 
         if df.empty:
-            logger.warning(f"Flipkart file {file_path} is empty.")
-            return pd.DataFrame()
+            logger.warning(f"FLIPKART_PARSER: Flipkart file {file_path} is empty.")
+            return empty_df, unmapped_skus
 
         qty_cols = self._get_quantity_column_names()
         date_col = self.account_config.get('report_settings', {}).get('date_column', 'Order Date')
         revenue_col = self.account_config.get('report_settings', {}).get('revenue_column', 'Final Sale Amount')
 
-        required_cols_for_processing = [sku_col, date_col] + qty_cols + [revenue_col]
-        missing_cols = [col for col in required_cols_for_processing if col not in df.columns]
+        required_cols = [sku_col, date_col, revenue_col] + qty_cols
+        missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
-            logger.error(f"Missing required columns {missing_cols} in Flipkart report {file_path}. Available: {df.columns.tolist()}")
-            return pd.DataFrame()
+            logger.error(f"FLIPKART_PARSER: Missing required columns {missing_cols} in Flipkart report. Available: {df.columns.tolist()}")
+            return empty_df, unmapped_skus
 
         df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
         df.dropna(subset=[date_col], inplace=True)
-        df_filtered = df[(df[date_col].dt.date >= report_start_date) & (df[date_col].dt.date <= report_end_date)].copy() # Use .copy()
+        df_filtered = df[
+            (df[date_col].dt.date >= report_start_date_obj) &
+            (df[date_col].dt.date <= report_end_date_obj)
+        ].copy()
 
         if df_filtered.empty:
-            logger.warning(f"No data in Flipkart report {file_path} for the selected date range: {report_start_date} to {report_end_date}")
-            return pd.DataFrame()
+            logger.warning(f"FLIPKART_PARSER: No data in report for the selected date range.")
+            return empty_df, unmapped_skus
 
         temp_data_for_aggregation = []
         for index, row in df_filtered.iterrows():
             platform_sku_from_file = row[sku_col]
-            # original_platform_sku will be the string version of platform_sku_from_file,
-            # msku_list will contain the mapped MSKU(s) or [None]
             original_platform_sku, msku_list = self._map_sku(platform_sku_from_file)
-            
+
+            if msku_list == [None]:
+                unmapped_skus.append({
+                    "Platform SKU": original_platform_sku,
+                    "Platform": self.platform_name,
+                    "Account": self.account_config.get('name'),
+                    "Source File": os.path.basename(file_path)
+                })
+                continue
+
             sale_date_dt = row[date_col]
             quantity_sold = sum(clean_integer_value(row.get(qc, 0)) for qc in qty_cols)
             net_revenue = clean_numeric_value(row.get(revenue_col, 0))
 
-            for msku_item in msku_list: # msku_item can be None if unmapped
+            for msku_item in msku_list:
                 temp_data_for_aggregation.append({
-                    'Sale Date': sale_date_dt.date(), # Store as date object for now, convert to string later
-                    'MSKU': msku_item, # This will be None if unmapped
+                    'Sale Date': sale_date_dt.date(),
+                    'MSKU': msku_item,
                     'Platform': self.platform_name,
                     'Account Name': self.account_config.get('name', self.account_slug),
-                    'Platform SKU': original_platform_sku, # This is the crucial part
+                    'Platform SKU': original_platform_sku,
+                    'Order ID': None,
                     'Quantity Sold': quantity_sold,
                     'Net Revenue': net_revenue,
                     'Report Source File': os.path.basename(file_path)
                 })
-        
-        if not temp_data_for_aggregation:
-            logger.warning(f"No records to aggregate after processing rows in {file_path}")
-            return pd.DataFrame()
 
-        # Create DataFrame for aggregation
+        if not temp_data_for_aggregation:
+            logger.warning(f"FLIPKART_PARSER: No records to aggregate after processing rows in {file_path}")
+            return empty_df, unmapped_skus
+
         agg_df = pd.DataFrame(temp_data_for_aggregation)
-        
-        # Handle potential None MSKUs before groupby by filling with a placeholder, then reverting
         agg_df['MSKU_agg'] = agg_df['MSKU'].fillna('__UNMAPPED__')
 
-        # Define aggregation functions
         agg_functions = {
             'Quantity Sold': 'sum',
             'Net Revenue': 'sum',
-            'Platform SKU': 'first', # Takes the first platform SKU encountered for that group
-            'Report Source File': 'first' 
+            'Platform SKU': 'first',
+            'Order ID': 'first',
+            'Report Source File': 'first'
         }
-        
-        # Group by the keys that define a unique daily sales record
+
         grouped_df = agg_df.groupby(
-            ['Sale Date', 'MSKU_agg', 'Platform', 'Account Name'], 
+            ['Sale Date', 'MSKU_agg', 'Platform', 'Account Name'],
             as_index=False
         ).agg(agg_functions)
-        
-        # Revert placeholder for MSKU
+
         grouped_df.rename(columns={'MSKU_agg': 'MSKU'}, inplace=True)
         grouped_df['MSKU'] = grouped_df['MSKU'].replace('__UNMAPPED__', None)
-
-        # Convert Sale Date back to string YYYY-MM-DD
         grouped_df['Sale Date'] = grouped_df['Sale Date'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else None)
 
-        # Add missing standard columns that are not directly from the report or aggregation
-        grouped_df['Order ID'] = None 
-        grouped_df['Gross Revenue'] = grouped_df['Net Revenue'] # Assuming Net = Gross for Flipkart
-        grouped_df['Discounts'] = 0
-        grouped_df['Platform Fees'] = 0
-        
-        logger.info(f"Successfully parsed and aggregated {len(grouped_df)} records from Flipkart file: {file_path}")
-        return grouped_df
+        grouped_df['Gross Revenue'] = grouped_df['Net Revenue']
+        grouped_df['Discounts'] = 0.0
+        grouped_df['Platform Fees'] = 0.0
+
+        logger.info(f"FLIPKART_PARSER: Successfully parsed and aggregated {len(grouped_df)} records from Flipkart file.")
+        logger.info(f"FLIPKART_PARSER: Found {len(unmapped_skus)} unmapped SKUs in this file.")
+        return grouped_df, unmapped_skus
