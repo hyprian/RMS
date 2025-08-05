@@ -422,10 +422,10 @@ with product_tab:
 
             with st.spinner("Running advanced replenishment calculations..."):
                 max_date = all_sales_df['Sale Date'].max()
-                min_date = max_date - timedelta(days=90)
+                min_date = max_date - timedelta(days=60)
                 daily_sales_for_stats = get_sales_data(all_sales_df, min_date, max_date)
                 
-                sales_stats = calculate_sales_stats(daily_sales_for_stats)
+                sales_stats = calculate_sales_stats(daily_sales_for_stats , sales_history_days=60)
                 open_po_data = get_open_po_data(all_pos_df)
                 last_order_dates = get_last_order_dates(all_pos_df)
                 
@@ -457,7 +457,7 @@ with product_tab:
                 all_categories = ['All Categories'] + sorted(unique_categories)
                 selected_category = st.selectbox("Filter by Category:", options=all_categories, key="filter_cat_tab1")
             with filter_cols[1]:
-                unique_statuses = [str(stat) for stat in overview_df['replen_status'].unique().tolist() if pd.notna(stat)]
+                unique_statuses = [str(stat) for stat in overview_df['order_status'].unique().tolist() if pd.notna(stat)]
                 all_statuses = ['All Statuses'] + sorted(unique_statuses)
                 selected_status = st.selectbox("Filter by Replenishment Status:", options=all_statuses, key="filter_status_tab1")
             with filter_cols[2]:
@@ -473,11 +473,11 @@ with product_tab:
             if selected_category != 'All Categories':
                 filtered_overview_df = filtered_overview_df[filtered_overview_df['Category'] == selected_category]
             if selected_status != 'All Statuses':
-                filtered_overview_df = filtered_overview_df[filtered_overview_df['replen_status'] == selected_status]
+                filtered_overview_df = filtered_overview_df[filtered_overview_df['order_status'] == selected_status]
             if hide_zero_inv:
                 filtered_overview_df = filtered_overview_df[filtered_overview_df['Current Inventory'] != 0]
             if hide_zero_sales:
-                filtered_overview_df = filtered_overview_df[filtered_overview_df['avg_daily_sales_30d'] != 0]
+                filtered_overview_df = filtered_overview_df[filtered_overview_df['avg_daily_sales'] != 0]
 
             # 2. Add the 'Select' column to the filtered DataFrame
             filtered_overview_df.insert(0, 'Select', False)
@@ -488,25 +488,20 @@ with product_tab:
                 # Detailed view with all calculation columns
                 # DETAILED DEBUG VIEW: Show everything
                 display_cols = [
-                    'MSKU', 'Product Type','Category', 'replen_status', 'movement_status', 'volatility_status',
+                    'Select', 'Image URL', 'MSKU','Category', 'Product Type', 'order_status', 'movement_status',
                     'Current Inventory', 'on_order_qty_air', 'on_order_qty_sea',
-                    'avg_daily_sales_30d','current_days_coverage','std_dev_daily_sales', 'coefficient_of_variation',
-                    'last_sale_date', 'days_since_last_sale',
+                    'avg_daily_sales', 'days_of_stock', 'days_since_last_sale',
                     'last_order_date', 'review_due',
-                    'adjusted_daily_sales', 'dynamic_safety_factor',
-                    'sea_lead_time_adjusted', 'sea_demand_lead', 'sea_demand_review', 'sea_safety_buffer', 'sea_target_stock',
-                    'sea_order_quantity',
-                    'air_lead_time_adjusted', 'air_demand_lead_nf', 'air_demand_review_nf', 'air_safety_nf', 'air_target_stock_nf',
-                    'air_order_quantity',
-                    'order_reason'
-                ]
+                    'sea_target_stock', 'air_target_stock',
+                    'sea_order_quantity', 'air_order_quantity', 'order_reason',
+                    'calc_coverage_needed', 'calc_gap_to_target'
+                    ]
             else:
                 # STANDARD VIEW: The curated list
                 display_cols = [
-                    'Select', 'Image URL', 'MSKU', 'Product Type', 'Category','replen_status', 
-                    'movement_status', 'volatility_status', 'Current Inventory', 
-                    'avg_daily_sales_30d', 'current_days_coverage',
-                    'on_order_qty_sea', 'on_order_qty_air',
+                    'Select', 'Image URL','MSKU', 'Category', 'Product Type', 'order_status', 
+                    'movement_status', 'Current Inventory', 'avg_daily_sales', 
+                    'days_of_stock', 'on_order_qty_sea', 'on_order_qty_air',
                     'sea_order_quantity', 'air_order_quantity', 'order_reason'
                 ]           
             # Add 'Select' to the detailed view if it's not there
@@ -520,46 +515,33 @@ with product_tab:
 
             # 3. Use the filtered DataFrame for the data_editor
             edited_overview_df = st.data_editor(
-                display_df,
+                filtered_overview_df,
                 column_order=display_cols,
                 column_config={
-                    # --- Add configs for ALL new columns ---
                     "Select": st.column_config.CheckboxColumn("Select"),
                     "Image URL": st.column_config.ImageColumn("Image"),
                     "MSKU": st.column_config.TextColumn("MSKU", disabled=True, width="medium"),
+                    "Category": st.column_config.TextColumn("Category", disabled=True, width="small"),
                     "Product Type": st.column_config.TextColumn("Type", width="small", disabled=True),
-                    "replen_status": st.column_config.TextColumn("Replen Status", width="medium", disabled=True),
+                    "order_status": st.column_config.TextColumn("Order Status", width="medium", disabled=True),
                     "movement_status": st.column_config.TextColumn("Movement", width="small", disabled=True),
-                    "volatility_status": st.column_config.TextColumn("Volatility", width="small", disabled=True),
                     "Current Inventory": st.column_config.NumberColumn("Current Inv.", format="%d", disabled=True),
-                    "avg_daily_sales_30d": st.column_config.NumberColumn("Avg Daily Sales", format="%.2f", disabled=True),
-                    "std_dev_daily_sales": st.column_config.NumberColumn("Std Dev", format="%.2f", disabled=True),
-                    "coefficient_of_variation": st.column_config.NumberColumn("Coeff Var", format="%.2f", disabled=True),
-                    "current_days_coverage": st.column_config.NumberColumn("Days of Stock", format="%.1f", disabled=True),
+                    "avg_daily_sales": st.column_config.NumberColumn("Avg Daily Sales", format="%.2f", disabled=True),
+                    "days_of_stock": st.column_config.NumberColumn("Days of Stock", format="%.1f", disabled=True),
                     "on_order_qty_sea": st.column_config.NumberColumn("On Order (Sea)", format="%d", disabled=True),
                     "on_order_qty_air": st.column_config.NumberColumn("On Order (Air)", format="%d", disabled=True),
                     "sea_order_quantity": st.column_config.NumberColumn("Suggest SEA Qty", format="%d", disabled=True),
                     "air_order_quantity": st.column_config.NumberColumn("Suggest AIR Qty", format="%d", disabled=True),
                     "order_reason": st.column_config.TextColumn("Order Reason", disabled=True),
-                    "adjusted_daily_sales": st.column_config.NumberColumn("Adj. Daily Sales", format="%.2f", disabled=True),
-                    "dynamic_safety_factor": st.column_config.NumberColumn("Safety Factor", format="%.2f", disabled=True),
-                    "sea_lead_time_adjusted": st.column_config.NumberColumn("Adj. SEA Lead Time", format="%d", disabled=True),
-                    "sea_demand_lead": st.column_config.NumberColumn("SEA Lead Demand", format="%.1f", disabled=True),
-                    "sea_demand_review": st.column_config.NumberColumn("SEA Review Demand", format="%.1f", disabled=True),
-                    "sea_safety_buffer": st.column_config.NumberColumn("SEA Safety Units", format="%.1f", disabled=True),
-                    "sea_target_stock": st.column_config.NumberColumn("SEA Target Stock", format="%d", disabled=True),
-                    "air_lead_time_adjusted": st.column_config.NumberColumn("Adj. AIR Lead Time", format="%d", disabled=True),
-                    "air_demand_lead_nf": st.column_config.NumberColumn("AIR Lead Demand (NF)", format="%.1f", disabled=True),
-                    "air_demand_review_nf": st.column_config.NumberColumn("AIR Review Demand (NF)", format="%.1f", disabled=True),
-                    "air_safety_nf": st.column_config.NumberColumn("AIR Safety Units (NF)", format="%.1f", disabled=True),
-                    "air_target_stock_nf": st.column_config.NumberColumn("AIR Target Stock (NF)", format="%d", disabled=True),
+                    "days_since_last_sale": st.column_config.NumberColumn("Days Since Sale", format="%d", disabled=True),
                     "last_order_date": st.column_config.DateColumn("Last Ordered", format="DD-MMM-YYYY", disabled=True),
                     "review_due": st.column_config.CheckboxColumn("Review Due?", disabled=True),
-                    "last_sale_date": st.column_config.DateColumn("Last Sale Date", format="DD-MMM-YYYY", disabled=True),
-                    "days_since_last_sale": st.column_config.NumberColumn("Days Since Sale", format="%d", disabled=True)
-
+                    "sea_target_stock": st.column_config.NumberColumn("SEA Target", format="%d", disabled=True),
+                    "air_target_stock": st.column_config.NumberColumn("AIR Target", format="%d", disabled=True),
+                    "calc_coverage_needed": st.column_config.NumberColumn("Coverage Needed", format="%.1f", disabled=True),
+                    "calc_gap_to_target": st.column_config.NumberColumn("Gap to Target", format="%.1f", disabled=True),
                 },
-                hide_index=True, use_container_width=True, key="advanced_overview_editor"
+                hide_index=True, use_container_width=True, key="simplified_overview_editor"
             )
             selected_rows = edited_overview_df[edited_overview_df['Select']]
             if st.button("Add Selected to Plan Draft", disabled=selected_rows.empty):
