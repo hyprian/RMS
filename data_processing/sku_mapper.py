@@ -12,8 +12,8 @@ from utils.cache_manager import load_from_cache, save_to_cache
 logger = logging.getLogger(__name__)
 
 class SKUMapper:
-    def __init__(self, baserow_fetcher, sku_mapping_table_id, combo_sku_table_id, 
-                 cache_config, project_root_dir, force_refresh_cache=False):
+    def __init__(self, baserow_fetcher, sku_mapping_table_id, combo_sku_table_id,
+                 amazon_listing_table_id, cache_config, project_root_dir, force_refresh_cache=False):
         """
         Initialize the SKUMapper.
 
@@ -26,6 +26,7 @@ class SKUMapper:
             force_refresh_cache (bool): If True, ignore existing cache.
         """
         self.fetcher = baserow_fetcher
+        self.amazon_listing_table_id = amazon_listing_table_id
         self.sku_mapping_table_id = sku_mapping_table_id
         self.combo_sku_table_id = combo_sku_table_id
         
@@ -46,6 +47,11 @@ class SKUMapper:
         self.combo_df = self._load_data_with_cache(
             cache_name="combo_sku_data",
             fetch_function=lambda: self.fetcher.get_combo_sku_data(self.combo_sku_table_id)
+        )
+
+        self.asin_df = self._load_data_with_cache(
+            cache_name="asin_mapping_data",
+            fetch_function=lambda: self.fetcher.get_asin_mapping_data(self.amazon_listing_table_id)
         )
         
         # Pre-process and build dictionaries for faster lookups if dfs are large
@@ -198,6 +204,114 @@ class SKUMapper:
             # logger.debug(f"Sample unmapped SKUs: {list(unmapped_sample)}")
             
         return sales_report_df
+    
+    def get_mapping_details_for_sku(self, platform_sku: str) -> dict | None:
+        """
+        Maps a single platform SKU and returns a dictionary of all its mapping details.
+
+        Args:
+            platform_sku (str): The SKU from the platform report.
+
+        Returns:
+            dict or None: A dictionary with keys like 'msku', 'Panel', 'Status'
+                          if a match is found, otherwise None.
+        """
+        if not platform_sku or pd.isna(platform_sku):
+            return None
+
+        try:
+            normalized_sku = unicodedata.normalize('NFKD', str(platform_sku).strip()).encode('ascii', 'ignore').decode('utf-8').lower()
+            if not normalized_sku:
+                return None
+            
+            # We will search directly in the mapping_df for this
+            # This is slightly slower than the pre-built dict but more flexible for getting multiple columns
+            if self.mapping_df.empty:
+                return None
+            
+            match_row = self.mapping_df[self.mapping_df['sku'] == normalized_sku]
+            
+            if not match_row.empty:
+                # Return the first match as a dictionary
+                details = match_row.iloc[0].to_dict()
+                # Ensure keys are consistent if needed (e.g., lowercase)
+                # For now, we assume they match the DataFrame columns: 'msku', 'Panel', 'Status'
+                return details
+            else:
+                # We don't handle combos in this detailed lookup for now, as they don't have a single Panel/Status
+                logger.warning(f"No mapping details found for SKU: '{normalized_sku}' (original: '{platform_sku}')")
+                return None
+        except Exception as e:
+            logger.error(f"Error getting mapping details for SKU '{platform_sku}': {e}", exc_info=True)
+            return None
+        
+    def get_mapping_details_for_msku(self, msku: str) -> list[dict] | None:
+        """
+        Finds all mapping records associated with a single MSKU.
+        An MSKU can be linked to multiple Platform SKUs.
+
+        Args:
+            msku (str): The Master SKU to search for.
+
+        Returns:
+            list[dict] or None: A list of dictionaries, where each dictionary
+                                represents a matching row (a platform SKU mapping).
+                                Returns None if no matches are found.
+        """
+        if not msku or pd.isna(msku):
+            return None
+
+        try:
+            # We search directly in the mapping_df for this
+            if self.mapping_df.empty:
+                return None
+            
+            # Find all rows where the 'msku' column matches
+            # We use .strip() and .lower() on the MSKU for a case-insensitive match,
+            # assuming MSKUs should be consistent.
+            # Note: The 'msku' column in the df is already stripped from the fetcher.
+            msku_to_find = str(msku).strip()
+            
+            match_rows = self.mapping_df[self.mapping_df['msku'] == msku_to_find]
+            
+            if not match_rows.empty:
+                # Return all matching rows as a list of dictionaries
+                return match_rows.to_dict('records')
+            else:
+                logger.warning(f"No mapping details found for MSKU: '{msku_to_find}'")
+                return None
+        except Exception as e:
+            logger.error(f"Error getting mapping details for MSKU '{msku}': {e}", exc_info=True)
+            return None
+        
+    def get_mapping_details_for_asin(self, asin: str) -> dict | None:
+        """
+        Finds the mapping record for a single ASIN.
+        An ASIN should ideally map to one SKU/MSKU combination.
+        """
+        if not asin or pd.isna(asin):
+            return None
+
+        try:
+            if self.asin_df.empty:
+                return None
+            
+            asin_to_find = str(asin).strip().upper()
+            
+            match_row = self.asin_df[self.asin_df['asin'] == asin_to_find]
+            
+            if not match_row.empty:
+                # Return the first match as a dictionary
+                # We can merge this with the main mapping_df to get Panel info if needed
+                # For now, let's return what's in the asin_df
+                details = match_row.iloc[0].to_dict()
+                return details
+            else:
+                logger.warning(f"No mapping details found for ASIN: '{asin_to_find}'")
+                return None
+        except Exception as e:
+            logger.error(f"Error getting mapping details for ASIN '{asin}': {e}", exc_info=True)
+            return None
 
     # Placeholder for inventory fetching logic
     # def get_inventory_for_mskus(self, mskus_list):

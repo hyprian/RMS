@@ -43,10 +43,16 @@ UNMAPPED_SKU_FILE = os.path.join(project_root, "unmapped_skus.csv")
 def get_ingestion_tools():
     try:
         fetcher = BaserowFetcher(api_token=APP_CONFIG['baserow']['api_token'], base_url=APP_CONFIG['baserow'].get('base_url'))
+        required_ids = ['sku_mapping_table_id', 'combo_sku_table_id', 'amazon_listing_table_id']
+        if not all(key in APP_CONFIG['baserow'] for key in required_ids):
+            st.error(f"Missing one or more required table IDs in configuration for the SKU Mapper: {required_ids}")
+            return None, None
+        
         sku_mapper_instance = SKUMapper(
             baserow_fetcher=fetcher,
             sku_mapping_table_id=APP_CONFIG['baserow']['sku_mapping_table_id'],
             combo_sku_table_id=APP_CONFIG['baserow']['combo_sku_table_id'],
+            amazon_listing_table_id=APP_CONFIG['baserow']['amazon_listing_table_id'],
             cache_config=APP_CONFIG.get('cache', {}),
             project_root_dir=project_root,
             force_refresh_cache=st.session_state.get('force_refresh_baserow_cache_ingestion', False)

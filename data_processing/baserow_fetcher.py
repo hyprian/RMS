@@ -854,3 +854,38 @@ class BaserowFetcher:
 
         logger.info(f"Successfully processed {len(df)} unique packaging material inventory records.")
         return df
+    
+    def get_asin_mapping_data(self, table_id):
+        """
+        Fetches ASIN to SKU/MSKU mapping data from Baserow.
+        """
+        logger.info(f"Fetching ASIN mapping data from table {table_id}")
+        
+        # Required columns from the 'Amazon listing' table
+        required_cols = ['Sku', 'Msku', 'Asin', 'Status']
+        
+        df = self.get_table_data_as_dataframe(table_id, required_columns=required_cols)
+        
+        if df.empty:
+            logger.warning(f"No ASIN mapping data fetched from table {table_id}.")
+            return pd.DataFrame()
+
+        # Standardize column names for consistency
+        df.rename(columns={'Sku': 'sku', 'Msku': 'msku', 'Asin': 'asin'}, inplace=True)
+        
+        # Clean the data
+        df['asin'] = df['asin'].astype(str).str.strip().str.upper() # ASINs are typically uppercase
+        df['sku'] = df['sku'].astype(str).str.strip().str.lower()
+        df['msku'] = df['msku'].astype(str).str.strip()
+        
+        # Drop rows where the primary keys (asin, sku, msku) are missing
+        df.dropna(subset=['asin', 'sku', 'msku'], inplace=True, how='all')
+        df = df[df['asin'] != ''] # ASIN is the key for this table
+        
+        # Handle duplicates - take the first one found for a given ASIN
+        if df['asin'].duplicated().any():
+            logger.warning(f"Duplicate ASINs found in listing table {table_id}. Keeping the first entry for each.")
+            df.drop_duplicates(subset=['asin'], keep='first', inplace=True)
+            
+        logger.info(f"Successfully processed {len(df)} unique ASIN mapping records.")
+        return df
