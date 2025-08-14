@@ -10,7 +10,7 @@ from utils.config_loader import APP_CONFIG
 logger = logging.getLogger(__name__)
 
 class BaserowFetcher:
-    def __init__(self, api_token, base_url="https://api.baserow.io"):
+    def __init__(self, api_token, base_url="http://129.159.18.115:49161"):
         self.base_url = base_url.rstrip('/')
         self.headers = {
             "Authorization": f"Token {api_token}",
@@ -23,7 +23,7 @@ class BaserowFetcher:
     def _get_all_rows(self, table_id):
         all_rows = []
         page = 1
-        size = 100
+        size = 200
         while True:
             url = f"{self.base_url}/api/database/rows/table/{table_id}/?user_field_names=true&page={page}&size={size}"
             try:

@@ -234,19 +234,23 @@ def get_open_po_data(all_pos_df: pd.DataFrame) -> pd.DataFrame:
 
 def get_last_order_dates(all_pos_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Finds the most recent 'Order Date' for each MSKU from the PO table.
+    Finds the most recent 'Order Date' for each MSKU from all POs.
     """
     if all_pos_df is None or all_pos_df.empty or 'Msku Code' not in all_pos_df.columns or 'Order Date' not in all_pos_df.columns:
+        logger.warning("PO_MGMT: Cannot get last order dates. DataFrame is empty or missing required columns.")
         return pd.DataFrame(columns=['MSKU', 'last_order_date'])
 
+    # Ensure 'Order Date' is a datetime object, coercing errors
     df = all_pos_df[['Msku Code', 'Order Date']].copy()
-    # The get_all_pos function already converts 'Order Date' to datetime
+    df['Order Date'] = pd.to_datetime(df['Order Date'], errors='coerce')
     df.dropna(subset=['Msku Code', 'Order Date'], inplace=True)
 
     if df.empty:
         return pd.DataFrame(columns=['MSKU', 'last_order_date'])
 
+    # Find the max (most recent) date for each MSKU
     last_dates = df.groupby('Msku Code')['Order Date'].max().reset_index()
     last_dates.rename(columns={'Msku Code': 'MSKU', 'Order Date': 'last_order_date'}, inplace=True)
     
-    return last_dates   
+    logger.info(f"PO_MGMT: Found last order dates for {len(last_dates)} MSKUs.")
+    return last_dates

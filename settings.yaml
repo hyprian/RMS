@@ -1,6 +1,6 @@
 baserow:
-  base_url: https://api.baserow.io
-  api_token: 7AB494siWdT7we5b09jyVVBpIh8nsg5t
+  base_url: http://129.159.18.115:49161
+  api_token: PfMJRl1I6CVwHPPLQ578vHmxvCR6fVMB
   inventory_warehouse_columns:
   - TLCQ
   amazon_listing_table_id: 616269
