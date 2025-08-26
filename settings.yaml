@@ -3,7 +3,7 @@ baserow:
   api_token: PfMJRl1I6CVwHPPLQ578vHmxvCR6fVMB
   inventory_warehouse_columns:
   - TLCQ
-  amazon_listing_table_id: 616269
+  amazon_listing_table_id: 708
 cache:
   directory: .rms_cache
   expiry_days: 5
