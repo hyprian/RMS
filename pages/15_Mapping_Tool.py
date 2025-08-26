@@ -19,6 +19,24 @@ from analytics_dashboard.kpi_calculations import process_sales_data_for_analytic
 import logging
 logger = logging.getLogger(__name__)
 
+def read_uploaded_file(uploaded_file):
+    """Reads an uploaded file (CSV or XLSX) into a Pandas DataFrame."""
+    try:
+        # Get the file extension
+        file_name = uploaded_file.name
+        if file_name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file, dtype=str).fillna('')
+        elif file_name.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(uploaded_file, dtype=str, engine='openpyxl').fillna('')
+        else:
+            st.error(f"Unsupported file format: {file_name}. Please upload a CSV or XLSX file.")
+            return None
+        return df
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+        return None
+
+
 st.set_page_config(page_title="Product Lookup Tool - RMS", layout="wide")
 
 if "error" in APP_CONFIG:
@@ -105,7 +123,6 @@ if st.sidebar.button("🔄 Refresh All Mapping Data from Baserow"):
 # --- Main Page UI ---
 st.header("1. Provide Your Data")
 
-# --- NEW: Input Method Selector ---
 input_method = st.radio(
     "Select Input Method:",
     options=["File Upload", "Manual Text Input"],
@@ -116,22 +133,28 @@ input_method = st.radio(
 input_df = None
 
 if input_method == "File Upload":
-    uploaded_file = st.file_uploader("Upload a CSV file", type="csv", key="mapper_file_uploader")
+    # --- THIS IS THE FIX ---
+    # Allow both csv and xlsx file types
+    uploaded_file = st.file_uploader(
+        "Upload a CSV or XLSX file", 
+        type=["csv", "xlsx", "xls"], 
+        key="mapper_file_uploader"
+    )
     if uploaded_file:
-        try:
-            input_df = pd.read_csv(uploaded_file, dtype=str).fillna('')
+        # Use the new helper function to read the file
+        input_df = read_uploaded_file(uploaded_file)
+        if input_df is not None:
             st.success(f"Successfully loaded '{uploaded_file.name}' with {len(input_df)} rows.")
-        except Exception as e:
-            st.error(f"Error reading CSV file: {e}")
+    # --- END FIX ---
 
 else: # Manual Text Input
+    # ... (this part remains the same) ...
     manual_input_text = st.text_area(
         "Paste your list of identifiers (one per line):",
         height=200,
         key="mapper_manual_input"
     )
     if manual_input_text:
-        # Convert the multi-line string into a DataFrame
         items = [item.strip() for item in manual_input_text.strip().split('\n') if item.strip()]
         if items:
             input_df = pd.DataFrame(items, columns=['Identifier'])
@@ -157,6 +180,21 @@ if st.session_state.mapper_input_df is not None:
             st.text_input("Source Column:", value=source_column, disabled=True)
         else:
             source_column = st.selectbox(f"Which column contains the {map_from_type}s?", options=column_options)
+    
+    # --- NEW: UI to select original columns to keep ---
+    st.subheader("Select Columns to Keep from Your Original File")
+    if input_method == "File Upload":
+        # Don't show the source column in this list as it's already included by default
+        keep_column_options = [col for col in input_df.columns if col != source_column]
+        selected_keep_columns = st.multiselect(
+            "Select any additional columns from your uploaded file to include in the final result:",
+            options=keep_column_options,
+            key="mapper_keep_columns"
+        )
+    else:
+        st.info("This option is available for File Uploads.")
+        selected_keep_columns = []
+    # --- END NEW ---
 
     # --- NEW: Improved UI for selecting output columns ---
     st.subheader("Select Data to Include in Results")
@@ -184,12 +222,18 @@ if st.session_state.mapper_input_df is not None:
             inc_vendor = st.checkbox("Vendor")
             inc_lead_time = st.checkbox("Vendor Lead Time")
 
+
     if st.button("Run Lookup & Enrich", disabled=(not source_column)):
-        # ... (The mapping logic from the previous step remains exactly the same) ...
         with st.spinner("Looking up data..."):
             results_list = []
+            
             for index, row in input_df.iterrows():
                 source_value = row[source_column]
+                
+                # Start with the original data the user wants to keep
+                result_row = {col: row[col] for col in selected_keep_columns}
+                result_row[source_column] = source_value
+                
                 base_details = {}
                 if map_from_type == "Platform SKU":
                     details = sku_mapper.get_mapping_details_for_sku(source_value)
@@ -200,18 +244,22 @@ if st.session_state.mapper_input_df is not None:
                 elif map_from_type == "ASIN":
                     details = sku_mapper.get_mapping_details_for_asin(source_value)
                     if details: base_details = details
-                result_row = {source_column: source_value}
+                
                 msku = base_details.get('msku') if base_details else None
-                if inc_sku: result_row['Platform SKU'] = base_details.get('sku', 'NOT FOUND')
-                if inc_msku: result_row['MSKU'] = msku if msku else 'NOT FOUND'
-                if inc_asin: result_row['ASIN'] = base_details.get('asin', 'NOT FOUND')
-                if inc_panel: result_row['Panel'] = base_details.get('Panel', 'N/A')
-                if inc_status: result_row['Listing Status'] = base_details.get('Status', 'N/A')
+                
+                # --- THIS IS THE FIX: Use distinct names for new columns ---
+                # Add enriched columns with a "Mapped_" prefix to avoid name clashes
+                if inc_sku: result_row['Mapped Platform SKU'] = base_details.get('sku', 'NOT FOUND')
+                if inc_msku: result_row['Mapped MSKU'] = msku if msku else 'NOT FOUND'
+                if inc_asin: result_row['Mapped ASIN'] = base_details.get('asin', 'NOT FOUND')
+                if inc_panel: result_row['Mapped Panel'] = base_details.get('Panel', 'N/A')
+                if inc_status: result_row['Mapped Listing Status'] = base_details.get('Status', 'N/A')
+                
                 if msku:
                     if (inc_category or inc_cogs or inc_vendor or inc_lead_time) and all_category_df is not None:
                         cat_row = all_category_df[all_category_df['MSKU'] == msku]
                         if not cat_row.empty:
-                            if inc_category: result_row['Category'] = cat_row.iloc[0].get('Category', 'N/A')
+                            if inc_category: result_row['Product Category'] = cat_row.iloc[0].get('Category', 'N/A')
                             if inc_cogs: result_row['COGS (INR)'] = cat_row.iloc[0].get('Cost Inc.GST', 'N/A')
                             if inc_vendor: result_row['Vendor'] = cat_row.iloc[0].get('Supplier', 'N/A')
                             if inc_lead_time: result_row['Vendor Lead Time'] = cat_row.iloc[0].get('Vendor Lead Time (days)', 'N/A')
@@ -226,8 +274,23 @@ if st.session_state.mapper_input_df is not None:
                     if inc_last_order and last_orders is not None:
                         order_row = last_orders[last_orders['MSKU'] == msku]
                         if not order_row.empty: result_row['Last Order Date'] = order_row.iloc[0].get('last_order_date')
+                
                 results_list.append(result_row)
+
             result_df = pd.DataFrame(results_list)
+
+            # --- THIS IS THE FIX for reordering ---
+            # The reordering logic is now much simpler because names are unique
+            # Start with the original columns
+            final_column_order = [source_column] + selected_keep_columns
+            # Add any new columns that were generated
+            enriched_cols = [col for col in result_df.columns if col not in final_column_order]
+            final_column_order.extend(enriched_cols)
+            
+            # This will now work because all column names in the list are unique
+            result_df = result_df[final_column_order]
+            # --- END FIX ---
+
             st.session_state.mapper_result_df = result_df
             st.success("Lookup complete! See the results below.")
 
