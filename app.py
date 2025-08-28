@@ -8,6 +8,69 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+
+# Import necessary modules
+from utils.config_loader import APP_CONFIG
+from notifications.notification_engine import run_all_checks
+import logging
+
+logger = logging.getLogger(__name__)
+
+# --- NEW: WEBHOOK HANDLING LOGIC ---
+def handle_notification_webhook():
+    """
+    Checks for a webhook trigger in the URL's query parameters.
+    If the trigger and a valid secret key are present, it runs the notification engine.
+    """
+    # Safely get the expected key from Streamlit Secrets
+    try:
+        expected_key = st.secrets.webhooks.notification_trigger_key
+    except (AttributeError, KeyError):
+        # This will happen if the secrets are not configured.
+        # We log it but don't stop the app, as a normal user might be visiting.
+        logger.warning("WEBHOOK: `webhooks.notification_trigger_key` not found in Streamlit Secrets.")
+        expected_key = None
+
+    # Get the trigger parameter from the URL (e.g., ?trigger_notifications=some_key)
+    query_params = st.query_params
+    trigger_key = query_params.get("trigger_notifications")
+
+    # Proceed only if a trigger key was provided in the URL
+    if trigger_key:
+        # Check if the provided key matches the expected secret key
+        if expected_key and trigger_key == expected_key:
+            logger.info("WEBHOOK: Notification trigger received with a valid key.")
+            
+            # Provide immediate feedback that the webhook was received.
+            # This is what n8n will see as the response body.
+            st.info("Webhook trigger received. Running notification checks in the background...")
+            
+            try:
+                # Run the main notification function
+                run_all_checks()
+                success_message = "Notification checks completed successfully."
+                logger.info(f"WEBHOOK: {success_message}")
+                st.success(success_message)
+            except Exception as e:
+                error_message = f"Webhook notification run failed: {e}"
+                logger.error(error_message, exc_info=True)
+                st.error(error_message)
+            
+            # Stop the script here. This is crucial to prevent the full UI
+            # from loading, making the webhook response fast and efficient.
+            st.stop()
+        else:
+            # A key was provided, but it was incorrect.
+            logger.warning(f"WEBHOOK: Invalid trigger key received: '{trigger_key}'")
+            st.error("Invalid trigger key provided.")
+            st.stop()
+
+# --- Run the webhook handler at the very top of the script ---
+# This ensures it executes before any other Streamlit command.
+handle_notification_webhook()
+# --- END NEW WEBHOOK LOGIC ---
+
+
 # Initialize logging and load config
 # This should be one of the first things to run
 try:

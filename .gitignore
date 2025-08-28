@@ -4,4 +4,3 @@ __pycache__/
 .session_data/
 .rms_cache/
 uploaded_data/
-.streamlit/
