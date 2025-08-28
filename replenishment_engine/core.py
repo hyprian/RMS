@@ -321,7 +321,11 @@ def run_replenishment_engine(
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(default)
     
     if 'Product Type' not in df.columns: df['Product Type'] = 'NON-FOCUSED'
-    df['Product Type'] = df['Product Type'].fillna('NON-FOCUSED').str.upper()
+    # df['Product Type'] = df['Product Type'].fillna('NON-FOCUSED').str.upper()
+
+    df['Product Type'] = df['Product Type'].astype(str).str.strip().fillna('NON-FOCUSED').str.upper()
+    # Replace common variations to standardize to our two main types
+    df['Product Type'].replace({'NON FOCUSED': 'NON-FOCUSED', 'NONFOCUSED': 'NON-FOCUSED'}, inplace=True)
     
     df['sea_order_eta'] = pd.to_datetime(df.get('sea_order_eta'), errors='coerce')
     df['last_order_date'] = pd.to_datetime(df.get('last_order_date'), errors='coerce')

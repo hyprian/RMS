@@ -96,3 +96,13 @@ replenishment_parameters:
   slow_moving_threshold: 0.3
   dead_stock_days: 60
   overstock_days: 60
+
+notifications:
+  waha_base_url: "http://129.159.18.115:49165"
+  waha_session: "us-phone-bot"
+  # Use a list of dicts to support multiple groups/recipients in the future
+  recipients:
+    - name: "RMS Alerts Group"
+      group_id: "120363418523579709@g.us"
+      # You could add flags here later, e.g., receives_low_stock: true
+  stale_data_threshold_days: 3
