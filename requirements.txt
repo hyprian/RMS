@@ -9,3 +9,4 @@ numpy<2.0
 gspread
 oauth2client
 openpyxl
+flask

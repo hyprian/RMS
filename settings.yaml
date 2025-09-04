@@ -106,3 +106,6 @@ notifications:
       group_id: "120363418523579709@g.us"
       # You could add flags here later, e.g., receives_low_stock: true
   stale_data_threshold_days: 3
+
+webhooks:
+  notification_trigger_key: "Tr1gg3r_Rms_N0tify_@2024!_aBcXyZ"
