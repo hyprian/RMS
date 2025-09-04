@@ -177,9 +177,6 @@ RMS/
 
 This application is designed to be extensible. Here are areas for future development:
 
--   **[Placeholder] COGS and Profitability:**
-    -   The `Category` table in Baserow can be enhanced with more detailed cost fields (e.g., `Cost`, `Shipping per Unit`, `Platform Fee %`).
-    -   The analytics and replenishment engines can be updated to calculate and display true Gross Profit, Net Profit, and ROI metrics.
 -   **[Placeholder] Advertising Analytics:**
     -   A new data ingestion parser can be created for advertising reports (e.g., from Amazon Ads).
     -   A new Baserow table would store standardized ad data (Spend, Clicks, Ad Sales per MSKU per day).
