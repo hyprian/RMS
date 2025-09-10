@@ -309,7 +309,7 @@ from packaging_module.packaging_logic import (
     calculate_packaging_replenishment
 )
 from replenishment_engine.core import calculate_sales_stats, run_replenishment_engine
-from po_module.po_management import get_all_pos, get_distinct_values, get_open_po_data, get_last_order_dates
+from po_module.po_management import get_all_pos, get_distinct_values, get_open_po_data, get_last_order_dates, get_last_landed_costs
 from packaging_module.packaging_logic import (
     process_outbound_to_daily_consumption,
     calculate_packaging_velocity,
@@ -545,6 +545,7 @@ with product_tab:
             )
             selected_rows = edited_overview_df[edited_overview_df['Select']]
             if st.button("Add Selected to Plan Draft", disabled=selected_rows.empty):
+                last_costs = get_last_landed_costs(all_pos_df)
                 items_added_count = 0
                 for index, row in selected_rows.iterrows():
                     # Check if the MSKU is already in the draft to avoid duplicates
@@ -558,6 +559,8 @@ with product_tab:
                         # Determine the suggested order quantities and primary shipment route
                         sea_qty = row.get('sea_order_quantity', 0)
                         air_qty = row.get('air_order_quantity', 0)
+
+                        last_unit_cost = last_costs.get(row['MSKU'], 0.0)
                         
                         primary_route = 'Air'
                         if sea_qty > 0:
@@ -573,7 +576,7 @@ with product_tab:
                             'Order Quantity': order_qty, # Start with the suggested qty (can be 0)
                             'Notes': row.get('order_reason', ''), # Use the order_reason for notes
                             'Vendor Name': full_row_data.get('Supplier', ''),
-                            'Unit Cost': 0.0,
+                            'Unit Cost': last_unit_cost,
                             'Currency': 'USD',
                             'Shipment Route': primary_route
                         }
@@ -710,7 +713,7 @@ if draft_df is not None and not draft_df.empty:
             "HSN Code": st.column_config.TextColumn(disabled=True), "Image URL": st.column_config.ImageColumn("Image"),
             "Order Quantity": st.column_config.NumberColumn(min_value=0, step=10, required=True),
             "Notes": st.column_config.TextColumn(width="large"),
-            "Vendor Name": st.column_config.SelectboxColumn(options=vendor_options, required=True),
+            "Vendor Name": st.column_config.SelectboxColumn(options=vendor_options, required=False),
             "Unit Cost": st.column_config.NumberColumn(min_value=0.0, format="%.4f", required=True),
             "Currency": st.column_config.SelectboxColumn(options=["USD", "CNY", "INR"], required=True)
         },

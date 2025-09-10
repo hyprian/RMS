@@ -4,6 +4,7 @@ import logging
 import requests
 import json
 from datetime import datetime
+import numpy as np 
 
 logger = logging.getLogger(__name__)
 
@@ -254,3 +255,57 @@ def get_last_order_dates(all_pos_df: pd.DataFrame) -> pd.DataFrame:
     
     logger.info(f"PO_MGMT: Found last order dates for {len(last_dates)} MSKUs.")
     return last_dates
+
+
+def get_last_landed_costs(all_pos_df: pd.DataFrame) -> pd.Series:
+    """
+    Calculates the most recent 'Final Cost With Packaging' for each MSKU.
+
+    Returns:
+        pd.Series: A Series with MSKU as the index and the last landed cost as the value.
+    """
+    if all_pos_df is None or all_pos_df.empty:
+        return pd.Series(dtype=float)
+
+    logger.info("PO_MGMT: Calculating last landed costs for all MSKUs.")
+    
+    df = all_pos_df.copy()
+    
+    # Ensure 'Order Date' is a datetime object for sorting
+    if 'Order Date' not in df.columns or not pd.api.types.is_datetime64_any_dtype(df['Order Date']):
+        logger.warning("PO_MGMT: 'Order Date' column is not a valid datetime type for cost calculation.")
+        return pd.Series(dtype=float)
+        
+    # Convert all cost and quantity columns to numeric
+    cost_cols = ['INR Amt', 'Carrying Amount', 'Porter Charges', 'Packaging and Other Charges', 'Quantity']
+    for col in cost_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        else:
+            df[col] = 0
+            
+    # Calculate Final Cost and Landed Cost (same logic as in Manage POs page)
+    df['Final Cost'] = np.where(
+        df['Quantity'] > 0,
+        (df['INR Amt'] + df['Carrying Amount'] + df['Porter Charges']) / df['Quantity'],
+        0
+    )
+    packaging_per_piece = np.where(
+        df['Quantity'] > 0,
+        df['Packaging and Other Charges'] / df['Quantity'],
+        0
+    )
+    df['Final Cost With Packaging'] = df['Final Cost'] + packaging_per_piece
+    
+    # Find the latest entry for each MSKU
+    df.sort_values(by='Order Date', ascending=True, inplace=True) # Sort so last one is most recent
+    last_costs_df = df.drop_duplicates(subset=['Msku Code'], keep='last')
+    
+    # Create a Series for easy mapping: Index=MSKU, Value=Landed Cost
+    last_costs_series = pd.Series(
+        last_costs_df['Final Cost With Packaging'].values,
+        index=last_costs_df['Msku Code']
+    )
+    
+    logger.info(f"PO_MGMT: Calculated last landed costs for {len(last_costs_series)} MSKUs.")
+    return last_costs_series
