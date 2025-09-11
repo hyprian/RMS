@@ -545,7 +545,7 @@ with product_tab:
             )
             selected_rows = edited_overview_df[edited_overview_df['Select']]
             if st.button("Add Selected to Plan Draft", disabled=selected_rows.empty):
-                last_costs = get_last_landed_costs(all_pos_df)
+                cost_history_df = get_last_landed_costs(all_pos_df)
                 items_added_count = 0
                 for index, row in selected_rows.iterrows():
                     # Check if the MSKU is already in the draft to avoid duplicates
@@ -560,7 +560,8 @@ with product_tab:
                         sea_qty = row.get('sea_order_quantity', 0)
                         air_qty = row.get('air_order_quantity', 0)
 
-                        last_unit_cost = last_costs.get(row['MSKU'], 0.0)
+                        last_cost_info = cost_history_df[cost_history_df['MSKU'] == row['MSKU']]
+                        last_unit_cost = last_cost_info['last_cost'].iloc[0] if not last_cost_info.empty else 0.0
                         
                         primary_route = 'Air'
                         if sea_qty > 0:
@@ -577,7 +578,7 @@ with product_tab:
                             'Notes': row.get('order_reason', ''), # Use the order_reason for notes
                             'Vendor Name': full_row_data.get('Supplier', ''),
                             'Unit Cost': last_unit_cost,
-                            'Currency': 'USD',
+                            'Currency': 'INR',
                             'Shipment Route': primary_route
                         }
                         new_item_df = pd.DataFrame([new_item])
@@ -705,20 +706,64 @@ draft_df = st.session_state.get('replenishment_plan_draft_df')
 if draft_df is not None and not draft_df.empty:
     st.info("Assign a **Vendor Name** and confirm the **Unit Cost** and **Order Quantity** for each item.")
     vendor_options = [""] + get_distinct_values(all_pos_df, 'Vendor Name')
+
+    # --- NEW: Pre-fetch cost history to merge with the draft ---
+    cost_history_df = get_last_landed_costs(all_pos_df)
+    if not cost_history_df.empty:
+        # Merge cost history into the draft DataFrame for easy access
+        draft_df_with_costs = pd.merge(draft_df, cost_history_df, on='MSKU', how='left')
+    else:
+        draft_df_with_costs = draft_df.copy()
+        draft_df_with_costs['last_cost'] = np.nan
+        draft_df_with_costs['second_last_cost'] = np.nan
+        draft_df_with_costs['last_cost_date'] = pd.NaT
+
+    # --- NEW: Create a new column for the popover display ---
+    # We will use st.data_editor's ability to render markdown
+    def create_cost_history_md(row):
+        last_cost = row.get('last_cost')
+        second_last_cost = row.get('second_last_cost')
+        
+        if pd.notna(last_cost):
+            # The popover will be attached to this button-like text
+            return "📜"
+        return "" # Return empty string if no cost history
+
+    draft_df_with_costs['Cost History'] = draft_df_with_costs.apply(create_cost_history_md, axis=1)
     
     edited_draft_df = st.data_editor(
-        draft_df,
+        draft_df_with_costs,
         column_config={
             "MSKU": st.column_config.TextColumn(disabled=True), "Category": st.column_config.TextColumn(disabled=True),
             "HSN Code": st.column_config.TextColumn(disabled=True), "Image URL": st.column_config.ImageColumn("Image"),
             "Order Quantity": st.column_config.NumberColumn(min_value=0, step=10, required=True),
             "Notes": st.column_config.TextColumn(width="large"),
             "Vendor Name": st.column_config.SelectboxColumn(options=vendor_options, required=False),
+            # "Cost History": st.column_config.TextColumn("📜", help="View last purchase costs for this item."),
             "Unit Cost": st.column_config.NumberColumn(min_value=0.0, format="%.4f", required=True),
-            "Currency": st.column_config.SelectboxColumn(options=["USD", "CNY", "INR"], required=True)
+            "Currency": st.column_config.SelectboxColumn(options=["USD", "CNY", "INR"], required=True),
+            "last_cost": None,
+            "second_last_cost": None,
+            "last_cost_date": None,
+            
         },
+        # Define the display order
+        column_order=[
+            "Image URL", "MSKU", "Category", "Order Quantity", "Vendor Name", 
+            "Currency", "Unit Cost", "Notes"
+        ],
+
         hide_index=True, use_container_width=True, key="draft_editor", num_rows="dynamic"
     )
+
+    for i, row in edited_draft_df.iterrows():
+        if row['Cost History'] == "📜":
+            with st.popover(f"Cost History for {row['MSKU']}"):
+                st.markdown(f"**Last Landed Cost:** ₹{row['last_cost']:.2f} (on {pd.to_datetime(row['last_cost_date']).strftime('%d-%b-%Y') if pd.notna(row['last_cost_date']) else 'N/A'})")
+                if pd.notna(row['second_last_cost']):
+                    st.markdown(f"**2nd Last Landed Cost:** ₹{row['second_last_cost']:.2f}")
+                else:
+                    st.caption("No prior cost history found.")
 
     # --- RESTORED SAVE CHANGES LOGIC ---
     original_df_for_compare = st.session_state.replenishment_plan_draft_df.reset_index(drop=True)

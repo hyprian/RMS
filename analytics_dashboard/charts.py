@@ -9,7 +9,7 @@ def create_sales_trend_chart(trend_df: pd.DataFrame,
                              y_column: str = 'Net Revenue', 
                              y_column_name: str = 'Net Revenue', # For display in chart
                              title: str = 'Sales Trend Over Time',
-                             color_discrete_map: dict = None): # Optional for custom colors
+                             color_column: str = None): # Optional for custom colors
     """
     Creates a line chart for sales trends using Plotly Express.
 
@@ -55,7 +55,8 @@ def create_sales_trend_chart(trend_df: pd.DataFrame,
             y=y_column,
             title=title,
             labels={'Sale Date': 'Date', y_column: y_column_name},
-            markers=True # Add markers to data points
+            markers=True, # Add markers to data points
+            color=color_column
         )
         fig.update_layout(
             xaxis_title="Date",
