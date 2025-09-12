@@ -451,7 +451,7 @@ with product_tab:
 
         with overview_tab:
             st.markdown("##### Filters")
-            filter_cols = st.columns(4)
+            filter_cols = st.columns([2, 2, 3])
             with filter_cols[0]:
                 unique_categories = [str(cat) for cat in overview_df['Category'].unique().tolist() if pd.notna(cat)]
                 all_categories = ['All Categories'] + sorted(unique_categories)
@@ -461,9 +461,13 @@ with product_tab:
                 all_statuses = ['All Statuses'] + sorted(unique_statuses)
                 selected_status = st.selectbox("Filter by Replenishment Status:", options=all_statuses, key="filter_status_tab1")
             with filter_cols[2]:
+                search_term = st.text_input("Search by MSKU:", placeholder="e.g., light, wand, cste_0330")
+                
+            cb_cols = st.columns(4)
+            with cb_cols[0]:
                 st.markdown("<br/>", unsafe_allow_html=True)
                 hide_zero_inv = st.checkbox("Hide Zero Inventory", value=True)
-            with filter_cols[3]:
+            with cb_cols[1]:
                 st.markdown("<br/>", unsafe_allow_html=True)
                 hide_zero_sales = st.checkbox("Hide Zero Avg Sales", value=True)
             
@@ -478,6 +482,13 @@ with product_tab:
                 filtered_overview_df = filtered_overview_df[filtered_overview_df['Current Inventory'] != 0]
             if hide_zero_sales:
                 filtered_overview_df = filtered_overview_df[filtered_overview_df['avg_daily_sales'] != 0]
+
+            if search_term:
+                # Use .str.contains() for a case-insensitive regex search
+                # na=False ensures that any MSKUs that are NaN don't cause an error
+                filtered_overview_df = filtered_overview_df[
+                    filtered_overview_df['MSKU'].str.contains(search_term, case=False, na=False, regex=True)
+                ]
 
             # 2. Add the 'Select' column to the filtered DataFrame
             filtered_overview_df.insert(0, 'Select', False)
