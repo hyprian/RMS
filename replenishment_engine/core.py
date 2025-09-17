@@ -270,13 +270,35 @@ def calculate_sales_stats(daily_sales_df: pd.DataFrame, sales_history_days: int 
         total_sales_period=('Quantity Sold', 'sum'),
         days_with_sales=('Quantity Sold', lambda x: (x > 0).sum())
     ).reset_index()
+
+
+    # --- NEW: Calculate fixed 30-day and 60-day total sales ---
+    start_date_30d = most_recent_date - timedelta(days=29)
+    sales_last_30d = daily_sales_df[daily_sales_df['Sale Date'] >= start_date_30d]
+    total_sales_30d = sales_last_30d.groupby('MSKU')['Quantity Sold'].sum().reset_index()
+    total_sales_30d.rename(columns={'Quantity Sold': 'Total Sales (30d)'}, inplace=True)
+
+    start_date_60d = most_recent_date - timedelta(days=59)
+    sales_last_60d = daily_sales_df[daily_sales_df['Sale Date'] >= start_date_60d]
+    total_sales_60d = sales_last_60d.groupby('MSKU')['Quantity Sold'].sum().reset_index()
+    total_sales_60d.rename(columns={'Quantity Sold': 'Total Sales (60d)'}, inplace=True)
+
+
     
     stats['avg_daily_sales'] = stats['total_sales_period'] / sales_history_days
     
     last_sale_dates = daily_sales_df[daily_sales_df['Quantity Sold'] > 0].groupby('MSKU')['Sale Date'].max().reset_index()
     last_sale_dates.columns = ['MSKU', 'last_sale_date']
+
+
     
     final_stats = pd.merge(stats, last_sale_dates, on='MSKU', how='left')
+    final_stats = pd.merge(final_stats, total_sales_30d, on='MSKU', how='left')
+    final_stats = pd.merge(final_stats, total_sales_60d, on='MSKU', how='left')
+
+    # Fill NaNs for the new columns with 0
+    final_stats['Total Sales (30d)'] = final_stats['Total Sales (30d)'].fillna(0).astype(int)
+    final_stats['Total Sales (60d)'] = final_stats['Total Sales (60d)'].fillna(0).astype(int)
     
     final_stats['last_sale_date'] = pd.to_datetime(final_stats['last_sale_date'], errors='coerce')
     most_recent_datetime = datetime.combine(most_recent_date, datetime.min.time())

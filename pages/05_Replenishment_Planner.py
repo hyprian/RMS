@@ -501,7 +501,7 @@ with product_tab:
                 display_cols = [
                     'Select', 'Image URL', 'MSKU','Category', 'Product Type', 'order_status', 'movement_status',
                     'Current Inventory', 'on_order_qty_air', 'on_order_qty_sea',
-                    'avg_daily_sales', 'days_of_stock', 'days_since_last_sale',
+                    'avg_daily_sales', 'Total Sales (30d)', 'Total Sales (60d)', 'days_of_stock', 'days_since_last_sale',
                     'last_order_date', 'review_due',
                     'sea_target_stock', 'air_target_stock',
                     'sea_order_quantity', 'air_order_quantity', 'order_reason',
@@ -511,7 +511,7 @@ with product_tab:
                 # STANDARD VIEW: The curated list
                 display_cols = [
                     'Select', 'Image URL','MSKU', 'Category', 'Product Type', 'order_status', 
-                    'movement_status', 'Current Inventory', 'avg_daily_sales', 
+                    'movement_status', 'Current Inventory', 'avg_daily_sales', 'Total Sales (30d)', 'Total Sales (60d)',
                     'days_of_stock', 'on_order_qty_sea', 'on_order_qty_air',
                     'sea_order_quantity', 'air_order_quantity', 'order_reason'
                 ]           
@@ -538,6 +538,8 @@ with product_tab:
                     "movement_status": st.column_config.TextColumn("Movement", width="small", disabled=True),
                     "Current Inventory": st.column_config.NumberColumn("Current Inv.", format="%d", disabled=True),
                     "avg_daily_sales": st.column_config.NumberColumn("Avg Daily Sales", format="%.2f", disabled=True),
+                    "Total Sales (30d)": st.column_config.NumberColumn(format="%d", disabled=True),
+                    "Total Sales (60d)": st.column_config.NumberColumn(format="%d", disabled=True),
                     "days_of_stock": st.column_config.NumberColumn("Days of Stock", format="%.1f", disabled=True),
                     "on_order_qty_sea": st.column_config.NumberColumn("On Order (Sea)", format="%d", disabled=True),
                     "on_order_qty_air": st.column_config.NumberColumn("On Order (Air)", format="%d", disabled=True),
