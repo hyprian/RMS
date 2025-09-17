@@ -127,6 +127,58 @@ else:
         expander_label = f"**PO #{po_number}** | Vendors: **{vendor_display}** | Date: {order_date_str} | Total Qty: {total_qty:,.0f} | Total Value: ₹{total_inr:,.2f}"
         
         with st.expander(expander_label):
+
+            # --- NEW: Clean Header with Actions ---
+            header_cols = st.columns([2, 1, 1]) # Ratios for Title, PDF Gen, Delete
+            with header_cols[1]:
+                # --- Dynamic PDF Generation UI ---
+                if len(unique_vendors) == 1:
+                    # If only one vendor, show a simple button
+                    vendor_for_pdf = unique_vendors[0]
+                    if st.button(f"Generate PDF for {vendor_for_pdf}", key=f"pdf_gen_single_{po_number}"):
+                        pdf_df = po_group_df[['Image URL', 'Msku Code', 'Quantity', 'Shipment Route', 'Arrive by']].copy()
+                        with st.spinner("Generating PDF..."):
+                            pdf_bytes = generate_po_pdf(po_number, vendor_for_pdf, order_date_str, pdf_df)
+                            st.session_state[f"pdf_data_{po_number}_{vendor_for_pdf}"] = pdf_bytes
+                else:
+                    # If multiple vendors, show a dropdown first
+                    vendor_for_pdf = st.selectbox("Select Vendor for PDF:", options=unique_vendors, key=f"pdf_vendor_select_{po_number}")
+                    if st.button(f"Generate PDF for {vendor_for_pdf}", key=f"pdf_gen_multi_{po_number}"):
+                        vendor_specific_df = po_group_df[po_group_df['Vendor Name'] == vendor_for_pdf]
+                        pdf_df = vendor_specific_df[['Image URL', 'Msku Code', 'Quantity', 'Shipment Route', 'Arrive by']].copy()
+                        with st.spinner("Generating PDF..."):
+                            pdf_bytes = generate_po_pdf(po_number, vendor_for_pdf, order_date_str, pdf_df)
+                            st.session_state[f"pdf_data_{po_number}_{vendor_for_pdf}"] = pdf_bytes
+                
+                # Universal Download Button (appears after generation)
+                pdf_key = f"pdf_data_{po_number}_{vendor_for_pdf}"
+                if pdf_key in st.session_state and st.session_state[pdf_key]:
+                    st.download_button(
+                        label=f"📥 Download PDF for {vendor_for_pdf}",
+                        data=st.session_state[pdf_key],
+                        file_name=f"PO_{po_number}_{vendor_for_pdf.replace(' ', '_')}.pdf",
+                        mime="application/pdf",
+                        key=f"dl_{pdf_key}"
+                    )
+
+            with header_cols[2]:
+                # --- Delete Popover ---
+                delete_popover = st.popover("🗑️ Delete PO", use_container_width=True)
+                with delete_popover:
+                    st.error(f"**Are you sure you want to permanently delete all {len(po_group_df)} items for PO #{po_number}?**")
+                    st.warning("This action cannot be undone.")
+                    if st.button("YES, DELETE THIS PO", key=f"confirm_delete_{po_number}", type="primary", use_container_width=True):
+                        with st.spinner(f"Deleting all items for PO #{po_number}..."):
+                            ids_to_delete = po_group_df['id'].tolist()
+                            delete_success = fetcher.batch_delete_rows(po_table_id, ids_to_delete)
+                            if delete_success:
+                                st.success(f"PO #{po_number} deleted.")
+                                st.session_state.manage_po_all_pos_df = load_po_data()
+                                st.rerun()
+                            else:
+                                st.error("Failed to delete PO. Check logs.")
+            # --- END NEW HEADER ---
+            #             
             st.subheader(f"Details for PO: {po_number}")
             
             # --- NEW: Toggle for detailed view ---
@@ -136,36 +188,36 @@ else:
             
             for vendor_name, vendor_group_df in grouped_by_vendor:
                 with st.container(border=True):
-                    vendor_header_cols = st.columns([3, 1])
-                    with vendor_header_cols[0]:
-                        st.markdown(f"#### Vendor: **{vendor_name}**")
-                    with vendor_header_cols[1]:
-                        # Prepare the DataFrame needed for the PDF, but don't generate the PDF yet.
-                        pdf_df = vendor_group_df[['Image URL', 'Msku Code', 'Quantity', 'Shipment Route', 'Arrive by']].copy()
+                    # vendor_header_cols = st.columns([3, 1])
+                    # with vendor_header_cols[0]:
+                    st.markdown(f"#### Vendor: **{vendor_name}**")
+                    # with vendor_header_cols[1]:
+                    #     # Prepare the DataFrame needed for the PDF, but don't generate the PDF yet.
+                    #     pdf_df = vendor_group_df[['Image URL', 'Msku Code', 'Quantity', 'Shipment Route', 'Arrive by']].copy()
                         
-                        # Use a unique key for the button to store its state
-                        pdf_button_key = f"pdf_btn_{po_number}_{vendor_name.replace(' ', '_')}"
+                    #     # Use a unique key for the button to store its state
+                    #     pdf_button_key = f"pdf_btn_{po_number}_{vendor_name.replace(' ', '_')}"
                         
-                        if st.button("Generate PDF", key=pdf_button_key):
-                            with st.spinner("Generating PDF..."):
-                                pdf_bytes = generate_po_pdf(po_number, vendor_name, order_date_str, pdf_df)
-                                # Store the generated PDF in session state with a unique key
-                                st.session_state[f"pdf_data_{pdf_button_key}"] = pdf_bytes
+                    #     if st.button("Generate PDF", key=pdf_button_key):
+                    #         with st.spinner("Generating PDF..."):
+                    #             pdf_bytes = generate_po_pdf(po_number, vendor_name, order_date_str, pdf_df)
+                    #             # Store the generated PDF in session state with a unique key
+                    #             st.session_state[f"pdf_data_{pdf_button_key}"] = pdf_bytes
 
-                        # Check if the PDF has been generated and is ready for download
-                        if f"pdf_data_{pdf_button_key}" in st.session_state:
-                            pdf_bytes_to_download = st.session_state[f"pdf_data_{pdf_button_key}"]
-                            if pdf_bytes_to_download:
-                                st.download_button(
-                                    label="📥 Download PDF",
-                                    data=pdf_bytes_to_download,
-                                    file_name=f"PO_{po_number}_{vendor_name.replace(' ', '_')}.pdf",
-                                    mime="application/pdf",
-                                    key=f"dl_{pdf_button_key}"
-                                )
-                            else:
-                                st.error("PDF generation failed.")
-                    line_items_to_edit = vendor_group_df.copy()
+                    #     # Check if the PDF has been generated and is ready for download
+                    #     if f"pdf_data_{pdf_button_key}" in st.session_state:
+                    #         pdf_bytes_to_download = st.session_state[f"pdf_data_{pdf_button_key}"]
+                    #         if pdf_bytes_to_download:
+                    #             st.download_button(
+                    #                 label="📥 Download PDF",
+                    #                 data=pdf_bytes_to_download,
+                    #                 file_name=f"PO_{po_number}_{vendor_name.replace(' ', '_')}.pdf",
+                    #                 mime="application/pdf",
+                    #                 key=f"dl_{pdf_button_key}"
+                    #             )
+                    #         else:
+                    #             st.error("PDF generation failed.")
+                    line_items_to_edit = vendor_group_df.copy() 
 
                     # Calculation logic
                     cost_cols = ['INR Amt', 'Carrying Amount', 'Porter Charges', 'Packaging and Other Charges', 'Quantity']
