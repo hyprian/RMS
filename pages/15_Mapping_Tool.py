@@ -54,6 +54,60 @@ if 'mapper_result_df' not in st.session_state:
     st.session_state.mapper_result_df = None
 # --- END FIX ---
 
+
+# --- NEW: Central Enrichment Helper Function ---
+def enrich_row(
+    result_row: dict, 
+    primary_msku: str | None,
+    base_details_sku: dict | None = None,
+    base_details_asin: dict | None = None
+) -> dict:
+    """
+    Takes a base result row and a primary MSKU, and enriches it with all selected data points.
+    """
+    base_details_sku = base_details_sku or {}
+    base_details_asin = base_details_asin or {}
+
+    # Add basic mapping info
+    if inc_sku: result_row['Mapped Platform SKU'] = base_details_asin.get('sku') or base_details_sku.get('sku', 'NOT FOUND')
+    if inc_msku: result_row['Mapped MSKU'] = primary_msku if primary_msku else 'NOT FOUND'
+    if inc_asin:
+        if base_details_asin:
+            result_row['Mapped ASIN'] = base_details_asin.get('asin', 'NOT FOUND')
+        elif primary_msku and sku_mapper.asin_df is not None:
+            asin_row = sku_mapper.asin_df[sku_mapper.asin_df['msku'] == primary_msku]
+            result_row['Mapped ASIN'] = asin_row.iloc[0].get('asin', 'N/A') if not asin_row.empty else 'NOT FOUND'
+        else:
+            result_row['Mapped ASIN'] = 'NOT FOUND'
+    if inc_panel: result_row['Mapped Panel'] = base_details_sku.get('Panel', 'N/A')
+    if inc_status: result_row['Mapped Listing Status'] = base_details_sku.get('Status') or base_details_asin.get('Status', 'N/A')
+    
+    # Enrich with data from other sources if we have a valid MSKU
+    if primary_msku:
+        if (inc_category or inc_cogs or inc_vendor or inc_lead_time) and all_category_df is not None:
+            cat_row = all_category_df[all_category_df['MSKU'] == primary_msku]
+            if not cat_row.empty:
+                if inc_category: result_row['Product Category'] = cat_row.iloc[0].get('Category', 'N/A')
+                if inc_cogs: result_row['COGS (INR)'] = cat_row.iloc[0].get('Cost Inc.GST', 'N/A')
+                if inc_vendor: result_row['Vendor'] = cat_row.iloc[0].get('Supplier', 'N/A')
+                if inc_lead_time: result_row['Vendor Lead Time'] = cat_row.iloc[0].get('Vendor Lead Time (days)', 'N/A')
+        
+        if inc_inventory and all_inventory_df is not None:
+            inv_row = all_inventory_df[all_inventory_df['MSKU'] == primary_msku]
+            if not inv_row.empty: result_row['Current Inventory'] = inv_row.iloc[0].get('Current Inventory', 0)
+        
+        if (inc_sales_30d or inc_last_sale) and sales_stats is not None:
+            stats_row = sales_stats[sales_stats['MSKU'] == primary_msku]
+            if not stats_row.empty:
+                if inc_sales_30d: result_row['30-Day Avg Sales'] = stats_row.iloc[0].get('avg_daily_sales', 0)
+                if inc_last_sale: result_row['Last Sale Date'] = stats_row.iloc[0].get('last_sale_date')
+        
+        if inc_last_order and last_orders is not None:
+            order_row = last_orders[last_orders['MSKU'] == primary_msku]
+            if not order_row.empty: result_row['Last Order Date'] = order_row.iloc[0].get('last_order_date')
+            
+    return result_row
+
 # --- Initialize Tools & Load ALL Data ---
 @st.cache_resource
 def get_lookup_tools(force_refresh=False):
@@ -229,68 +283,49 @@ if st.session_state.mapper_input_df is not None:
             
             for index, row in input_df.iterrows():
                 source_value = row[source_column]
+                per_source_results = []
                 
-                # Start with the original data the user wants to keep
-                result_row = {col: row[col] for col in selected_keep_columns}
-                result_row[source_column] = source_value
-                
-                base_details = {}
+                # --- THIS IS THE REFACTORED LOGIC ---
                 if map_from_type == "Platform SKU":
-                    details = sku_mapper.get_mapping_details_for_sku(source_value)
-                    if details: base_details = details
+                    mapped_details = sku_mapper.get_mapping_details_for_sku(source_value)
+                    primary_msku = mapped_details.get('msku') if mapped_details else None
+                    result_row = {source_column: source_value}
+                    enriched_row = enrich_row(result_row, primary_msku, base_details_sku=mapped_details)
+                    per_source_results.append(enriched_row)
+
                 elif map_from_type == "MSKU":
-                    details_list = sku_mapper.get_mapping_details_for_msku(source_value)
-                    if details_list: base_details = details_list[0]
+                    primary_msku = source_value
+                    mapped_details_list = sku_mapper.get_mapping_details_for_msku(primary_msku)
+                    
+                    if mapped_details_list:
+                        # Create a new row for EACH mapped platform SKU
+                        for details_dict in mapped_details_list:
+                            result_row = {source_column: source_value}
+                            enriched_row = enrich_row(result_row, primary_msku, base_details_sku=details_dict)
+                            per_source_results.append(enriched_row)
+                    else:
+                        # If no platform SKUs are found, still show one row with enriched data
+                        result_row = {source_column: source_value}
+                        enriched_row = enrich_row(result_row, primary_msku)
+                        per_source_results.append(enriched_row)
+
                 elif map_from_type == "ASIN":
-                    details = sku_mapper.get_mapping_details_for_asin(source_value)
-                    if details: base_details = details
+                    mapped_details = sku_mapper.get_mapping_details_for_asin(source_value)
+                    primary_msku = mapped_details.get('msku') if mapped_details else None
+                    result_row = {source_column: source_value}
+                    enriched_row = enrich_row(result_row, primary_msku, base_details_asin=mapped_details)
+                    per_source_results.append(enriched_row)
                 
-                msku = base_details.get('msku') if base_details else None
+                # This handles cases where the initial lookup completely fails
+                if not per_source_results:
+                    result_row = {source_column: source_value}
+                    enriched_row = enrich_row(result_row, None)
+                    per_source_results.append(enriched_row)
                 
-                # --- THIS IS THE FIX: Use distinct names for new columns ---
-                # Add enriched columns with a "Mapped_" prefix to avoid name clashes
-                if inc_sku: result_row['Mapped Platform SKU'] = base_details.get('sku', 'NOT FOUND')
-                if inc_msku: result_row['Mapped MSKU'] = msku if msku else 'NOT FOUND'
-                if inc_asin: result_row['Mapped ASIN'] = base_details.get('asin', 'NOT FOUND')
-                if inc_panel: result_row['Mapped Panel'] = base_details.get('Panel', 'N/A')
-                if inc_status: result_row['Mapped Listing Status'] = base_details.get('Status', 'N/A')
-                
-                if msku:
-                    if (inc_category or inc_cogs or inc_vendor or inc_lead_time) and all_category_df is not None:
-                        cat_row = all_category_df[all_category_df['MSKU'] == msku]
-                        if not cat_row.empty:
-                            if inc_category: result_row['Product Category'] = cat_row.iloc[0].get('Category', 'N/A')
-                            if inc_cogs: result_row['COGS (INR)'] = cat_row.iloc[0].get('Cost Inc.GST', 'N/A')
-                            if inc_vendor: result_row['Vendor'] = cat_row.iloc[0].get('Supplier', 'N/A')
-                            if inc_lead_time: result_row['Vendor Lead Time'] = cat_row.iloc[0].get('Vendor Lead Time (days)', 'N/A')
-                    if inc_inventory and all_inventory_df is not None:
-                        inv_row = all_inventory_df[all_inventory_df['MSKU'] == msku]
-                        if not inv_row.empty: result_row['Current Inventory'] = inv_row.iloc[0].get('Current Inventory', 0)
-                    if (inc_sales_30d or inc_last_sale) and sales_stats is not None:
-                        stats_row = sales_stats[sales_stats['MSKU'] == msku]
-                        if not stats_row.empty:
-                            if inc_sales_30d: result_row['30-Day Avg Sales'] = stats_row.iloc[0].get('avg_daily_sales', 0)
-                            if inc_last_sale: result_row['Last Sale Date'] = stats_row.iloc[0].get('last_sale_date')
-                    if inc_last_order and last_orders is not None:
-                        order_row = last_orders[last_orders['MSKU'] == msku]
-                        if not order_row.empty: result_row['Last Order Date'] = order_row.iloc[0].get('last_order_date')
-                
-                results_list.append(result_row)
-
-            result_df = pd.DataFrame(results_list)
-
-            # --- THIS IS THE FIX for reordering ---
-            # The reordering logic is now much simpler because names are unique
-            # Start with the original columns
-            final_column_order = [source_column] + selected_keep_columns
-            # Add any new columns that were generated
-            enriched_cols = [col for col in result_df.columns if col not in final_column_order]
-            final_column_order.extend(enriched_cols)
+                results_list.extend(per_source_results)
             
-            # This will now work because all column names in the list are unique
-            result_df = result_df[final_column_order]
-            # --- END FIX ---
-
+            result_df = pd.DataFrame(results_list)
+            
             st.session_state.mapper_result_df = result_df
             st.success("Lookup complete! See the results below.")
 

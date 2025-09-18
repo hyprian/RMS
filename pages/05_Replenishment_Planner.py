@@ -587,6 +587,8 @@ with product_tab:
                             'Category': full_row_data.get('Category', ''),
                             'HSN Code': full_row_data.get('HSN Code', ''),
                             'Image URL': row.get('Image URL', ''),
+                            'Total Sales (30d)': full_row_data.get('Total Sales (30d)', 0), # Add 30d sales
+                            'Total Sales (60d)': full_row_data.get('Total Sales (60d)', 0), # Add 60d sales
                             'Order Quantity': order_qty, # Start with the suggested qty (can be 0)
                             'Notes': row.get('order_reason', ''), # Use the order_reason for notes
                             'Vendor Name': full_row_data.get('Supplier', ''),
@@ -749,6 +751,8 @@ if draft_df is not None and not draft_df.empty:
         column_config={
             "MSKU": st.column_config.TextColumn(disabled=True), "Category": st.column_config.TextColumn(disabled=True),
             "HSN Code": st.column_config.TextColumn(disabled=True), "Image URL": st.column_config.ImageColumn("Image"),
+            "Total Sales (30d)": st.column_config.NumberColumn(format="%d", disabled=True),
+            "Total Sales (60d)": st.column_config.NumberColumn(format="%d", disabled=True),
             "Order Quantity": st.column_config.NumberColumn(min_value=0, step=10, required=True),
             "Notes": st.column_config.TextColumn(width="large"),
             "Vendor Name": st.column_config.SelectboxColumn(options=vendor_options, required=False),
@@ -769,25 +773,85 @@ if draft_df is not None and not draft_df.empty:
         hide_index=True, use_container_width=True, key="draft_editor", num_rows="dynamic"
     )
 
-    for i, row in edited_draft_df.iterrows():
-        if row['Cost History'] == "📜":
-            with st.popover(f"Cost History for {row['MSKU']}"):
-                st.markdown(f"**Last Landed Cost:** ₹{row['last_cost']:.2f} (on {pd.to_datetime(row['last_cost_date']).strftime('%d-%b-%Y') if pd.notna(row['last_cost_date']) else 'N/A'})")
-                if pd.notna(row['second_last_cost']):
-                    st.markdown(f"**2nd Last Landed Cost:** ₹{row['second_last_cost']:.2f}")
-                else:
-                    st.caption("No prior cost history found.")
+    # for i, row in edited_draft_df.iterrows():
+    #     if row['Cost History'] == "📜":
+    #         with st.popover(f"Cost History for {row['MSKU']}"):
+    #             st.markdown(f"**Last Landed Cost:** ₹{row['last_cost']:.2f} (on {pd.to_datetime(row['last_cost_date']).strftime('%d-%b-%Y') if pd.notna(row['last_cost_date']) else 'N/A'})")
+    #             if pd.notna(row['second_last_cost']):
+    #                 st.markdown(f"**2nd Last Landed Cost:** ₹{row['second_last_cost']:.2f}")
+    #             else:
+    #                 st.caption("No prior cost history found.")
 
-    # --- RESTORED SAVE CHANGES LOGIC ---
-    original_df_for_compare = st.session_state.replenishment_plan_draft_df.reset_index(drop=True)
-    edited_df_for_compare = edited_draft_df.reset_index(drop=True)
-    if not original_df_for_compare.equals(edited_df_for_compare):
-        st.caption("ℹ️ Changes detected in the draft.")
-        if st.button("Save Draft Changes", type="primary"):
-            st.session_state.replenishment_plan_draft_df = edited_draft_df
-            st.success("Draft updated successfully.")
-            st.rerun()
-    # --- END RESTORED LOGIC ---
+    # # --- RESTORED SAVE CHANGES LOGIC ---
+    # original_df_for_compare = st.session_state.replenishment_plan_draft_df.reset_index(drop=True)
+    # edited_df_for_compare = edited_draft_df.reset_index(drop=True)
+    # if not original_df_for_compare.equals(edited_df_for_compare):
+    #     st.caption("ℹ️ Changes detected in the draft.")
+    #     if st.button("Save Draft Changes", type="primary"):
+    #         st.session_state.replenishment_plan_draft_df = edited_draft_df
+    #         st.success("Draft updated successfully.")
+    #         st.rerun()
+    # # --- END RESTORED LOGIC ---
+
+    # --- NEW: Purchase History Section ---
+    st.markdown("---")
+    show_history = st.toggle("📜 Show Purchase History for Draft Items", value=False)
+
+    if show_history:
+        st.subheader("Purchase History for Items in Draft")
+        draft_mskust = edited_draft_df['MSKU'].unique().tolist()
+        
+        # Filter the main PO history DataFrame for the relevant MSKUs
+        history_df = all_pos_df[all_pos_df['Msku Code'].isin(draft_mskust)].copy()
+        
+        if history_df.empty:
+            st.info("No previous purchase history found for the items in the current draft.")
+        else:
+            # Calculate Landed Cost for the historical records
+            cost_cols = ['INR Amt', 'Carrying Amount', 'Porter Charges', 'Packaging and Other Charges', 'Quantity']
+            for col in cost_cols:
+                if col in history_df.columns:
+                    history_df[col] = pd.to_numeric(history_df[col], errors='coerce').fillna(0)
+                else:
+                    history_df[col] = 0
+            
+            history_df['Final Cost'] = np.where(
+                history_df['Quantity'] > 0,
+                (history_df['INR Amt'] + history_df['Carrying Amount'] + history_df['Porter Charges']) / history_df['Quantity'],
+                0
+            )
+            packaging_per_piece = np.where(
+                history_df['Quantity'] > 0,
+                history_df['Packaging and Other Charges'] / history_df['Quantity'],
+                0
+            )
+            history_df['Landed Cost/pcs'] = history_df['Final Cost'] + packaging_per_piece
+            
+            # Select and rename columns for a clean display
+            history_display_cols = {
+                'Order Date': 'Order Date',
+                'Msku Code': 'MSKU',
+                'Vendor Name': 'Vendor',
+                'Quantity': 'Qty Ordered',
+                'Final Cost': 'Final Cost',
+                'Landed Cost/pcs': 'Landed Cost (INR)',
+                'Status': 'PO Status'
+            }
+            history_display_df = history_df[list(history_display_cols.keys())].rename(columns=history_display_cols)
+            
+            # Sort by date to show the most recent orders first
+            history_display_df.sort_values(by='Order Date', ascending=False, inplace=True)
+            
+            st.dataframe(
+                history_display_df,
+                column_config={
+                    "Order Date": st.column_config.DateColumn(format="DD-MMM-YYYY"),
+                    "Landed Cost (INR)": st.column_config.NumberColumn(format="₹%.2f")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+    # --- END NEW SECTION ---
 
     st.markdown("---")
     if st.button("Send Plan to PO Workspace", type="primary"):
