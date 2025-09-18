@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  rms-app:
+    build: .
+    container_name: rms-app
+    restart: unless-stopped
+
+    # Map port 49179 on your server to port 8501 inside the container
+    ports:
+      - "49179:8501"
+
+    # This is crucial for data persistence and configuration.
+    # It links files/folders on your server to the container.
+    volumes:
+      - ./settings.yaml:/app/settings.yaml
+      - ./logs:/app/logs
+      - ./.rms_cache:/app/.rms_cache
+      # Add any other data folders you need to persist here
+
+    # This is the fix for your massive log file problem.
+    # It tells Docker to handle log rotation for the container itself.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"  # Max 20MB per log file
+        max-file: "5"    # Keep a maximum of 5 log files
