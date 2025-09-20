@@ -832,6 +832,8 @@ if draft_df is not None and not draft_df.empty:
                 'Order Date': 'Order Date',
                 'Msku Code': 'MSKU',
                 'Vendor Name': 'Vendor',
+                'Forwarder': 'Forwarder',
+                'Carrying Amount': 'Carrying Amount',
                 'Quantity': 'Qty Ordered',
                 'Final Cost': 'Final Cost',
                 'Landed Cost/pcs': 'Landed Cost (INR)',
